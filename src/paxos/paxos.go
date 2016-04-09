@@ -12,7 +12,7 @@ package paxos
 //
 // The application interface:
 //
-// px = paxos.Make(peers []string, me string)
+// px = paxos.Make(peers []string, me int)
 // px.Start(seq int, v interface{}) -- start agreement on new instance
 // px.Status(seq int) (Fate, v interface{}) -- get info about an instance
 // px.Done(seq int) -- ok to forget all instances <= seq

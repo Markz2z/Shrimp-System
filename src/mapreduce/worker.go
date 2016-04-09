@@ -1,66 +1,73 @@
 package mapreduce
 
-import "fmt"
-import "os"
-import "log"
-import "net/rpc"
-import "net"
-import "container/list"
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/rpc"
+	"os"
+	"sync"
+)
 
-// Worker is a server waiting for DoJob or Shutdown RPCs
-
+// Worker holds the state for a server waiting for DoTask or Shutdown RPCs
 type Worker struct {
+	sync.Mutex
+
 	name   string
-	Reduce func(string, *list.List) string
-	Map    func(string) *list.List
-	nRPC   int
-	nJobs  int
+	Map    func(string, string) []KeyValue
+	Reduce func(string, []string) string
+	nRPC   int // protected by mutex
+	nTasks int // protected by mutex
 	l      net.Listener
 }
 
-// The master sent us a job
-func (wk *Worker) DoJob(arg *DoJobArgs, res *DoJobReply) error {
-	fmt.Printf("Dojob %s job %d file %s operation %v N %d\n",
-		wk.name, arg.JobNumber, arg.File, arg.Operation,
-		arg.NumOtherPhase)
-	switch arg.Operation {
-	case Map:
-		DoMap(arg.JobNumber, arg.File, arg.NumOtherPhase, wk.Map)
-	case Reduce:
-		DoReduce(arg.JobNumber, arg.File, arg.NumOtherPhase, wk.Reduce)
+// DoTask is called by the master when a new task is being scheduled on this
+// worker.
+func (wk *Worker) DoTask(arg *DoTaskArgs, _ *struct{}) error {
+	fmt.Printf("%s: given %v task #%d on file %s (nios: %d)\n",
+		wk.name, arg.Phase, arg.TaskNumber, arg.File, arg.NumOtherPhase)
+
+	switch arg.Phase {
+	case mapPhase:
+		doMap(arg.JobName, arg.TaskNumber, arg.File, arg.NumOtherPhase, wk.Map)
+	case reducePhase:
+		doReduce(arg.JobName, arg.TaskNumber, arg.NumOtherPhase, wk.Reduce)
 	}
-	res.OK = true
+
+	fmt.Printf("%s: %v task #%d done\n", wk.name, arg.Phase, arg.TaskNumber)
 	return nil
 }
 
-// The master is telling us to shutdown. Report the number of Jobs we
-// have processed.
-func (wk *Worker) Shutdown(args *ShutdownArgs, res *ShutdownReply) error {
-	DPrintf("Shutdown %s\n", wk.name)
-	res.Njobs = wk.nJobs
-	res.OK = true
-	wk.nRPC = 1 // OK, because the same thread reads nRPC
-	wk.nJobs--  // Don't count the shutdown RPC
+// Shutdown is called by the master when all work has been completed.
+// We should respond with the number of tasks we have processed.
+func (wk *Worker) Shutdown(_ *struct{}, res *ShutdownReply) error {
+	debug("Shutdown %s\n", wk.name)
+	wk.Lock()
+	defer wk.Unlock()
+	res.Ntasks = wk.nTasks
+	wk.nRPC = 1
+	wk.nTasks-- // Don't count the shutdown RPC
 	return nil
 }
 
 // Tell the master we exist and ready to work
-func Register(master string, me string) {
-	args := &RegisterArgs{}
-	args.Worker = me
-	var reply RegisterReply
-	ok := call(master, "MapReduce.Register", args, &reply)
+func (wk *Worker) register(master string) {
+	args := new(RegisterArgs)
+	args.Worker = wk.name
+	ok := call(master, "Master.Register", args, new(struct{}))
 	if ok == false {
 		fmt.Printf("Register: RPC %s register error\n", master)
 	}
 }
 
-// Set up a connection with the master, register with the master,
-// and wait for jobs from the master
+// RunWorker sets up a connection with the master, registers its address, and
+// waits for tasks to be scheduled.
 func RunWorker(MasterAddress string, me string,
-	MapFunc func(string) *list.List,
-	ReduceFunc func(string, *list.List) string, nRPC int) {
-	DPrintf("RunWorker %s\n", me)
+	MapFunc func(string, string) []KeyValue,
+	ReduceFunc func(string, []string) string,
+	nRPC int,
+) {
+	debug("RunWorker %s\n", me)
 	wk := new(Worker)
 	wk.name = me
 	wk.Map = MapFunc
@@ -74,19 +81,29 @@ func RunWorker(MasterAddress string, me string,
 		log.Fatal("RunWorker: worker ", me, " error: ", e)
 	}
 	wk.l = l
-	Register(MasterAddress, me)
+	wk.register(MasterAddress)
 
 	// DON'T MODIFY CODE BELOW
-	for wk.nRPC != 0 {
+	for {
+		wk.Lock()
+		if wk.nRPC == 0 {
+			wk.Unlock()
+			break
+		}
+		wk.Unlock()
 		conn, err := wk.l.Accept()
 		if err == nil {
-			wk.nRPC -= 1
+			wk.Lock()
+			wk.nRPC--
+			wk.Unlock()
 			go rpcs.ServeConn(conn)
-			wk.nJobs += 1
+			wk.Lock()
+			wk.nTasks++
+			wk.Unlock()
 		} else {
 			break
 		}
 	}
 	wk.l.Close()
-	DPrintf("RunWorker %s exit\n", me)
+	debug("RunWorker %s exit\n", me)
 }

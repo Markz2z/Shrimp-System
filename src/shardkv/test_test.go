@@ -1,360 +1,830 @@
 package shardkv
 
 import "testing"
-import "shardmaster"
-import "runtime"
 import "strconv"
-import "os"
 import "time"
 import "fmt"
-import "sync"
 import "sync/atomic"
 import "math/rand"
 
-// information about the servers of one replica group.
-type tGroup struct {
-	gid     int64
-	servers []*ShardKV
-	ports   []string
-}
-
-// information about all the servers of a k/v cluster.
-type tCluster struct {
-	t           *testing.T
-	masters     []*shardmaster.ShardMaster
-	mck         *shardmaster.Clerk
-	masterports []string
-	groups      []*tGroup
-}
-
-func port(tag string, host int) string {
-	s := "/var/tmp/824-"
-	s += strconv.Itoa(os.Getuid()) + "/"
-	os.Mkdir(s, 0777)
-	s += "skv-"
-	s += strconv.Itoa(os.Getpid()) + "-"
-	s += tag + "-"
-	s += strconv.Itoa(host)
-	return s
+func check(t *testing.T, ck *Clerk, key string, value string) {
+	v := ck.Get(key)
+	if v != value {
+		t.Fatalf("Get(%v): expected:\n%v\nreceived:\n%v", key, value, v)
+	}
 }
 
 //
-// start a k/v replica server thread.
+// test static 2-way sharding, without shard movement.
 //
-func (tc *tCluster) start1(gi int, si int, unreliable bool) {
-	s := StartServer(tc.groups[gi].gid, tc.masterports, tc.groups[gi].ports, si)
-	tc.groups[gi].servers[si] = s
-	s.Setunreliable(unreliable)
-}
+func TestStaticShards(t *testing.T) {
+	fmt.Printf("Test: static shards ...\n")
 
-func (tc *tCluster) cleanup() {
-	for gi := 0; gi < len(tc.groups); gi++ {
-		g := tc.groups[gi]
-		for si := 0; si < len(g.servers); si++ {
-			if g.servers[si] != nil {
-				g.servers[si].kill()
-			}
+	cfg := make_config(t, 3, false, -1)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+	cfg.join(1)
+
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(20)
+		ck.Put(ka[i], va[i])
+	}
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	// make sure that the data really is sharded by
+	// shutting down one shard and checking that some
+	// Get()s don't succeed.
+	cfg.ShutdownGroup(1)
+	cfg.checklogs() // forbid snapshots
+
+	ch := make(chan bool)
+	for xi := 0; xi < n; xi++ {
+		ck1 := cfg.makeClient() // only one call allowed per client
+		go func(i int) {
+			defer func() { ch <- true }()
+			check(t, ck1, ka[i], va[i])
+		}(xi)
+	}
+
+	// wait a bit, only about half the Gets should succeed.
+	ndone := 0
+	done := false
+	for done == false {
+		select {
+		case <-ch:
+			ndone += 1
+		case <-time.After(time.Second * 2):
+			done = true
+			break
 		}
 	}
 
-	for i := 0; i < len(tc.masters); i++ {
-		if tc.masters[i] != nil {
-			tc.masters[i].Kill()
+	if ndone != 5 {
+		t.Fatalf("expected 5 completions with one shard dead; got %v\n", ndone)
+	}
+
+	// bring the crashed shard/group back to life.
+	cfg.StartGroup(1)
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+func TestJoinLeave(t *testing.T) {
+	fmt.Printf("Test: join then leave ...\n")
+
+	cfg := make_config(t, 3, false, -1)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(5)
+		ck.Put(ka[i], va[i])
+	}
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	cfg.join(1)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(5)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	cfg.leave(0)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(5)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	// allow time for shards to transfer.
+	time.Sleep(1 * time.Second)
+
+	cfg.checklogs()
+	cfg.ShutdownGroup(0)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+func TestSnapshot(t *testing.T) {
+	fmt.Printf("Test: snapshots, join, and leave ...\n")
+
+	cfg := make_config(t, 3, false, 1000)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	n := 30
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(20)
+		ck.Put(ka[i], va[i])
+	}
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	cfg.join(1)
+	cfg.join(2)
+	cfg.leave(0)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(20)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	cfg.leave(1)
+	cfg.join(0)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(20)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	time.Sleep(1 * time.Second)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	time.Sleep(1 * time.Second)
+
+	cfg.checklogs()
+
+	cfg.ShutdownGroup(0)
+	cfg.ShutdownGroup(1)
+	cfg.ShutdownGroup(2)
+
+	cfg.StartGroup(0)
+	cfg.StartGroup(1)
+	cfg.StartGroup(2)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+func TestMissChange(t *testing.T) {
+	fmt.Printf("Test: servers miss configuration changes...\n")
+
+	cfg := make_config(t, 3, false, 1000)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(20)
+		ck.Put(ka[i], va[i])
+	}
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	cfg.join(1)
+
+	cfg.ShutdownServer(0, 0)
+	cfg.ShutdownServer(1, 0)
+	cfg.ShutdownServer(2, 0)
+
+	cfg.join(2)
+	cfg.leave(1)
+	cfg.leave(0)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(20)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	cfg.join(1)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(20)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	cfg.StartServer(0, 0)
+	cfg.StartServer(1, 0)
+	cfg.StartServer(2, 0)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(20)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	time.Sleep(2 * time.Second)
+
+	cfg.ShutdownServer(0, 1)
+	cfg.ShutdownServer(1, 1)
+	cfg.ShutdownServer(2, 1)
+
+	cfg.join(0)
+	cfg.leave(2)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+		x := randstring(20)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	cfg.StartServer(0, 1)
+	cfg.StartServer(1, 1)
+	cfg.StartServer(2, 1)
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+func TestConcurrent1(t *testing.T) {
+	fmt.Printf("Test: concurrent puts and configuration changes...\n")
+
+	cfg := make_config(t, 3, false, 100)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(5)
+		ck.Put(ka[i], va[i])
+	}
+
+	var done int32
+	ch := make(chan bool)
+
+	ff := func(i int) {
+		defer func() { ch <- true }()
+		ck1 := cfg.makeClient()
+		for atomic.LoadInt32(&done) == 0 {
+			x := randstring(5)
+			ck1.Append(ka[i], x)
+			va[i] += x
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
-}
 
-func (tc *tCluster) shardclerk() *shardmaster.Clerk {
-	return shardmaster.MakeClerk(tc.masterports)
-}
-
-func (tc *tCluster) clerk() *Clerk {
-	return MakeClerk(tc.masterports)
-}
-
-func (tc *tCluster) join(gi int) {
-	tc.mck.Join(tc.groups[gi].gid, tc.groups[gi].ports)
-}
-
-func (tc *tCluster) leave(gi int) {
-	tc.mck.Leave(tc.groups[gi].gid)
-}
-
-func setup(t *testing.T, tag string, unreliable bool) *tCluster {
-	runtime.GOMAXPROCS(4)
-
-	const nmasters = 3
-	const ngroups = 3   // replica groups
-	const nreplicas = 3 // servers per group
-
-	tc := &tCluster{}
-	tc.t = t
-	tc.masters = make([]*shardmaster.ShardMaster, nmasters)
-	tc.masterports = make([]string, nmasters)
-
-	for i := 0; i < nmasters; i++ {
-		tc.masterports[i] = port(tag+"m", i)
-	}
-	for i := 0; i < nmasters; i++ {
-		tc.masters[i] = shardmaster.StartServer(tc.masterports, i)
-	}
-	tc.mck = tc.shardclerk()
-
-	tc.groups = make([]*tGroup, ngroups)
-
-	for i := 0; i < ngroups; i++ {
-		tc.groups[i] = &tGroup{}
-		tc.groups[i].gid = int64(i + 100)
-		tc.groups[i].servers = make([]*ShardKV, nreplicas)
-		tc.groups[i].ports = make([]string, nreplicas)
-		for j := 0; j < nreplicas; j++ {
-			tc.groups[i].ports[j] = port(tag+"s", (i*nreplicas)+j)
-		}
-		for j := 0; j < nreplicas; j++ {
-			tc.start1(i, j, unreliable)
-		}
+	for i := 0; i < n; i++ {
+		go ff(i)
 	}
 
-	// return smh, gids, ha, sa, clean
-	return tc
+	time.Sleep(150 * time.Millisecond)
+	cfg.join(1)
+	time.Sleep(500 * time.Millisecond)
+	cfg.join(2)
+	time.Sleep(500 * time.Millisecond)
+	cfg.leave(0)
+
+	cfg.ShutdownGroup(0)
+	time.Sleep(100 * time.Millisecond)
+	cfg.ShutdownGroup(1)
+	time.Sleep(100 * time.Millisecond)
+	cfg.ShutdownGroup(2)
+
+	cfg.leave(2)
+
+	time.Sleep(100 * time.Millisecond)
+	cfg.StartGroup(0)
+	cfg.StartGroup(1)
+	cfg.StartGroup(2)
+
+	time.Sleep(100 * time.Millisecond)
+	cfg.join(0)
+	cfg.leave(1)
+	time.Sleep(500 * time.Millisecond)
+	cfg.join(1)
+
+	time.Sleep(1 * time.Second)
+
+	atomic.StoreInt32(&done, 1)
+	for i := 0; i < n; i++ {
+		<-ch
+	}
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
 }
 
-func TestBasic(t *testing.T) {
-	tc := setup(t, "basic", false)
-	defer tc.cleanup()
+//
+// this tests the various sources from which a re-starting
+// group might need to fetch shard contents.
+//
+func TestConcurrent2(t *testing.T) {
+	fmt.Printf("Test: more concurrent puts and configuration changes...\n")
 
-	fmt.Printf("Test: Basic Join/Leave ...\n")
+	cfg := make_config(t, 3, false, -1)
+	defer cfg.cleanup()
 
-	tc.join(0)
+	ck := cfg.makeClient()
 
-	ck := tc.clerk()
+	cfg.join(1)
+	cfg.join(0)
+	cfg.join(2)
 
-	ck.Put("a", "x")
-	ck.Append("a", "b")
-	if ck.Get("a") != "xb" {
-		t.Fatalf("Get got wrong value")
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(1)
+		ck.Put(ka[i], va[i])
 	}
 
-	keys := make([]string, 10)
-	vals := make([]string, len(keys))
-	for i := 0; i < len(keys); i++ {
-		keys[i] = strconv.Itoa(rand.Int())
-		vals[i] = strconv.Itoa(rand.Int())
-		ck.Put(keys[i], vals[i])
-	}
+	var done int32
+	ch := make(chan bool)
 
-	// are keys still there after joins?
-	for g := 1; g < len(tc.groups); g++ {
-		tc.join(g)
-		time.Sleep(1 * time.Second)
-		for i := 0; i < len(keys); i++ {
-			v := ck.Get(keys[i])
-			if v != vals[i] {
-				t.Fatalf("joining; wrong value; g=%v k=%v wanted=%v got=%v",
-					g, keys[i], vals[i], v)
-			}
-			vals[i] = strconv.Itoa(rand.Int())
-			ck.Put(keys[i], vals[i])
+	ff := func(i int, ck1 *Clerk) {
+		defer func() { ch <- true }()
+		for atomic.LoadInt32(&done) == 0 {
+			x := randstring(1)
+			ck1.Append(ka[i], x)
+			va[i] += x
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
-	// are keys still there after leaves?
-	for g := 0; g < len(tc.groups)-1; g++ {
-		tc.leave(g)
-		time.Sleep(1 * time.Second)
-		for i := 0; i < len(keys); i++ {
-			v := ck.Get(keys[i])
-			if v != vals[i] {
-				t.Fatalf("leaving; wrong value; g=%v k=%v wanted=%v got=%v",
-					g, keys[i], vals[i], v)
-			}
-			vals[i] = strconv.Itoa(rand.Int())
-			ck.Put(keys[i], vals[i])
+	for i := 0; i < n; i++ {
+		ck1 := cfg.makeClient()
+		go ff(i, ck1)
+	}
+
+	cfg.leave(0)
+	cfg.leave(2)
+	time.Sleep(3000 * time.Millisecond)
+	cfg.join(0)
+	cfg.join(2)
+	cfg.leave(1)
+	time.Sleep(3000 * time.Millisecond)
+	cfg.join(1)
+	cfg.leave(0)
+	cfg.leave(2)
+	time.Sleep(3000 * time.Millisecond)
+
+	cfg.ShutdownGroup(1)
+	cfg.ShutdownGroup(2)
+	time.Sleep(1000 * time.Millisecond)
+	cfg.StartGroup(1)
+	cfg.StartGroup(2)
+
+	time.Sleep(2 * time.Second)
+
+	atomic.StoreInt32(&done, 1)
+	for i := 0; i < n; i++ {
+		<-ch
+	}
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+func TestUnreliable1(t *testing.T) {
+	fmt.Printf("Test: unreliable 1...\n")
+
+	cfg := make_config(t, 3, true, 100)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(5)
+		ck.Put(ka[i], va[i])
+	}
+
+	cfg.join(1)
+	cfg.join(2)
+	cfg.leave(0)
+
+	for ii := 0; ii < n*2; ii++ {
+		i := ii % n
+		check(t, ck, ka[i], va[i])
+		x := randstring(5)
+		ck.Append(ka[i], x)
+		va[i] += x
+	}
+
+	cfg.join(0)
+	cfg.leave(1)
+
+	for ii := 0; ii < n*2; ii++ {
+		i := ii % n
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+func TestUnreliable2(t *testing.T) {
+	fmt.Printf("Test: unreliable 2...\n")
+
+	cfg := make_config(t, 3, true, 100)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = randstring(5)
+		ck.Put(ka[i], va[i])
+	}
+
+	var done int32
+	ch := make(chan bool)
+
+	ff := func(i int) {
+		defer func() { ch <- true }()
+		ck1 := cfg.makeClient()
+		for atomic.LoadInt32(&done) == 0 {
+			x := randstring(5)
+			ck1.Append(ka[i], x)
+			va[i] += x
+		}
+	}
+
+	for i := 0; i < n; i++ {
+		go ff(i)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	cfg.join(1)
+	time.Sleep(500 * time.Millisecond)
+	cfg.join(2)
+	time.Sleep(500 * time.Millisecond)
+	cfg.leave(0)
+	time.Sleep(500 * time.Millisecond)
+	cfg.leave(1)
+	time.Sleep(500 * time.Millisecond)
+	cfg.join(1)
+	cfg.join(0)
+
+	time.Sleep(2 * time.Second)
+
+	atomic.StoreInt32(&done, 1)
+	cfg.net.Reliable(true)
+	for i := 0; i < n; i++ {
+		<-ch
+	}
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+//
+// optional test to see whether servers are deleting
+// shards for which they are no longer responsible.
+//
+func TestChallenge1Delete(t *testing.T) {
+	fmt.Printf("Test: shard deletion (challenge 1) ...\n")
+
+	// "1" means force snapshot after every log entry.
+	cfg := make_config(t, 3, false, 1)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	// 30,000 bytes of total values.
+	n := 30
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i)
+		va[i] = randstring(1000)
+		ck.Put(ka[i], va[i])
+	}
+	for i := 0; i < 3; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	for iters := 0; iters < 2; iters++ {
+		cfg.join(1)
+		cfg.leave(0)
+		cfg.join(2)
+		time.Sleep(3 * time.Second)
+		for i := 0; i < 3; i++ {
+			check(t, ck, ka[i], va[i])
+		}
+		cfg.leave(1)
+		cfg.join(0)
+		cfg.leave(2)
+		time.Sleep(3 * time.Second)
+		for i := 0; i < 3; i++ {
+			check(t, ck, ka[i], va[i])
+		}
+	}
+
+	cfg.join(1)
+	cfg.join(2)
+	time.Sleep(1 * time.Second)
+	for i := 0; i < 3; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+	time.Sleep(1 * time.Second)
+	for i := 0; i < 3; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+	time.Sleep(1 * time.Second)
+	for i := 0; i < 3; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	total := 0
+	for gi := 0; gi < cfg.ngroups; gi++ {
+		for i := 0; i < cfg.n; i++ {
+			raft := cfg.groups[gi].saved[i].RaftStateSize()
+			snap := len(cfg.groups[gi].saved[i].ReadSnapshot())
+			total += raft + snap
+		}
+	}
+
+	// 27 keys should be stored once.
+	// 3 keys should also be stored in client dup tables.
+	// everything on 3 replicas.
+	// plus slop.
+	expected := 3 * (((n - 3) * 1000) + 2*3*1000 + 6000)
+	if total > expected {
+		t.Fatalf("snapshot + persisted Raft state are too big: %v > %v\n", total, expected)
+	}
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+func TestChallenge1Concurrent(t *testing.T) {
+	fmt.Printf("Test: concurrent configuration change and restart (challenge 1)...\n")
+
+	cfg := make_config(t, 3, false, 300)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	cfg.join(0)
+
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i)
+		va[i] = randstring(1)
+		ck.Put(ka[i], va[i])
+	}
+
+	var done int32
+	ch := make(chan bool)
+
+	ff := func(i int, ck1 *Clerk) {
+		defer func() { ch <- true }()
+		for atomic.LoadInt32(&done) == 0 {
+			x := randstring(1)
+			ck1.Append(ka[i], x)
+			va[i] += x
+		}
+	}
+
+	for i := 0; i < n; i++ {
+		ck1 := cfg.makeClient()
+		go ff(i, ck1)
+	}
+
+	t0 := time.Now()
+	for time.Since(t0) < 12*time.Second {
+		cfg.join(2)
+		cfg.join(1)
+		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
+		cfg.ShutdownGroup(0)
+		cfg.ShutdownGroup(1)
+		cfg.ShutdownGroup(2)
+		cfg.StartGroup(0)
+		cfg.StartGroup(1)
+		cfg.StartGroup(2)
+
+		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
+		cfg.leave(1)
+		cfg.leave(2)
+		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
+	}
+
+	time.Sleep(2 * time.Second)
+
+	atomic.StoreInt32(&done, 1)
+	for i := 0; i < n; i++ {
+		<-ch
+	}
+
+	for i := 0; i < n; i++ {
+		check(t, ck, ka[i], va[i])
+	}
+
+	fmt.Printf("  ... Passed\n")
+}
+
+//
+// optional test to see whether servers can handle
+// shards that are not affected by a config change
+// while the config change is underway
+//
+func TestChallenge2Unaffected(t *testing.T) {
+	fmt.Printf("Test: unaffected shard access (challenge 2) ...\n")
+
+	cfg := make_config(t, 3, true, 100)
+	defer cfg.cleanup()
+
+	ck := cfg.makeClient()
+
+	// JOIN 100
+	cfg.join(0)
+
+	// Do a bunch of puts to keys in all shards
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = "100"
+		ck.Put(ka[i], va[i])
+	}
+
+	// JOIN 101
+	cfg.join(1)
+
+	// QUERY to find shards now owned by 101
+	c := cfg.mck.Query(-1)
+	owned := make(map[int]bool, n)
+	for s, gid := range c.Shards {
+		owned[s] = gid == cfg.groups[1].gid
+	}
+
+	// Wait for migration to new config to complete, and for clients to
+	// start using this updated config. Gets to any key k such that
+	// owned[shard(k)] == true should now be served by group 101.
+	<-time.After(1 * time.Second)
+	for i := 0; i < n; i++ {
+		if owned[i] {
+			va[i] = "101"
+			ck.Put(ka[i], va[i])
+		}
+	}
+
+	// KILL 100
+	cfg.ShutdownGroup(0)
+
+	// LEAVE 100
+	// 101 doesn't get a chance to migrate things previously owned by 100
+	cfg.leave(0)
+
+	// Wait to make sure clients see new config
+	<-time.After(1 * time.Second)
+
+	// And finally: check that gets/puts for 101-owned keys still complete
+	for i := 0; i < n; i++ {
+		shard := int(ka[i][0]) % 10
+		if owned[shard] {
+			check(t, ck, ka[i], va[i])
+			ck.Put(ka[i], va[i]+"-1")
+			check(t, ck, ka[i], va[i]+"-1")
 		}
 	}
 
 	fmt.Printf("  ... Passed\n")
 }
 
-func TestMove(t *testing.T) {
-	tc := setup(t, "move", false)
-	defer tc.cleanup()
+//
+// optional test to see whether servers can handle operations on shards that
+// have been received as a part of a config migration when the entire migration
+// has not yet completed.
+//
+func TestChallenge2Partial(t *testing.T) {
+	fmt.Printf("Test: partial migration shard access (challenge 2) ...\n")
 
-	fmt.Printf("Test: Shards really move ...\n")
+	cfg := make_config(t, 3, true, 100)
+	defer cfg.cleanup()
 
-	tc.join(0)
+	ck := cfg.makeClient()
 
-	ck := tc.clerk()
+	// JOIN 100 + 101 + 102
+	cfg.joinm([]int{0, 1, 2})
 
-	// insert one key per shard
-	for i := 0; i < shardmaster.NShards; i++ {
-		ck.Put(string('0'+i), string('0'+i))
+	// Give the implementation some time to reconfigure
+	<-time.After(1 * time.Second)
+
+	// Do a bunch of puts to keys in all shards
+	n := 10
+	ka := make([]string, n)
+	va := make([]string, n)
+	for i := 0; i < n; i++ {
+		ka[i] = strconv.Itoa(i) // ensure multiple shards
+		va[i] = "100"
+		ck.Put(ka[i], va[i])
 	}
 
-	// add group 1.
-	tc.join(1)
-	time.Sleep(5 * time.Second)
+	// QUERY to find shards owned by 102
+	c := cfg.mck.Query(-1)
+	owned := make(map[int]bool, n)
+	for s, gid := range c.Shards {
+		owned[s] = gid == cfg.groups[2].gid
+	}
 
-	// check that keys are still there.
-	for i := 0; i < shardmaster.NShards; i++ {
-		if ck.Get(string('0'+i)) != string('0'+i) {
-			t.Fatalf("missing key/value")
+	// KILL 100
+	cfg.ShutdownGroup(0)
+
+	// LEAVE 100 + 102
+	// 101 can get old shards from 102, but not from 100. 101 should start
+	// serving shards that used to belong to 102 as soon as possible
+	cfg.leavem([]int{0, 2})
+
+	// Give the implementation some time to start reconfiguration
+	// And to migrate 102 -> 101
+	<-time.After(1 * time.Second)
+
+	// And finally: check that gets/puts for 101-owned keys now complete
+	for i := 0; i < n; i++ {
+		shard := key2shard(ka[i])
+		if owned[shard] {
+			check(t, ck, ka[i], va[i])
+			ck.Put(ka[i], va[i]+"-2")
+			check(t, ck, ka[i], va[i]+"-2")
 		}
 	}
 
-	// remove sockets from group 0.
-	for _, port := range tc.groups[0].ports {
-		os.Remove(port)
-	}
-
-	count := int32(0)
-	var mu sync.Mutex
-	for i := 0; i < shardmaster.NShards; i++ {
-		go func(me int) {
-			myck := tc.clerk()
-			v := myck.Get(string('0' + me))
-			if v == string('0'+me) {
-				mu.Lock()
-				atomic.AddInt32(&count, 1)
-				mu.Unlock()
-			} else {
-				t.Fatalf("Get(%v) yielded %v\n", me, v)
-			}
-		}(i)
-	}
-
-	time.Sleep(10 * time.Second)
-
-	ccc := atomic.LoadInt32(&count)
-	if ccc > shardmaster.NShards/3 && ccc < 2*(shardmaster.NShards/3) {
-		fmt.Printf("  ... Passed\n")
-	} else {
-		t.Fatalf("%v keys worked after killing 1/2 of groups; wanted %v",
-			ccc, shardmaster.NShards/2)
-	}
-}
-
-func TestLimp(t *testing.T) {
-	tc := setup(t, "limp", false)
-	defer tc.cleanup()
-
-	fmt.Printf("Test: Reconfiguration with some dead replicas ...\n")
-
-	tc.join(0)
-
-	ck := tc.clerk()
-
-	ck.Put("a", "b")
-	if ck.Get("a") != "b" {
-		t.Fatalf("got wrong value")
-	}
-
-	// kill one server from each replica group.
-	for gi := 0; gi < len(tc.groups); gi++ {
-		sa := tc.groups[gi].servers
-		ns := len(sa)
-		sa[rand.Int()%ns].kill()
-	}
-
-	keys := make([]string, 10)
-	vals := make([]string, len(keys))
-	for i := 0; i < len(keys); i++ {
-		keys[i] = strconv.Itoa(rand.Int())
-		vals[i] = strconv.Itoa(rand.Int())
-		ck.Put(keys[i], vals[i])
-	}
-
-	// are keys still there after joins?
-	for g := 1; g < len(tc.groups); g++ {
-		tc.join(g)
-		time.Sleep(1 * time.Second)
-		for i := 0; i < len(keys); i++ {
-			v := ck.Get(keys[i])
-			if v != vals[i] {
-				t.Fatalf("joining; wrong value; g=%v k=%v wanted=%v got=%v",
-					g, keys[i], vals[i], v)
-			}
-			vals[i] = strconv.Itoa(rand.Int())
-			ck.Put(keys[i], vals[i])
-		}
-	}
-
-	// are keys still there after leaves?
-	for gi := 0; gi < len(tc.groups)-1; gi++ {
-		tc.leave(gi)
-		time.Sleep(2 * time.Second)
-		g := tc.groups[gi]
-		for i := 0; i < len(g.servers); i++ {
-			g.servers[i].kill()
-		}
-		for i := 0; i < len(keys); i++ {
-			v := ck.Get(keys[i])
-			if v != vals[i] {
-				t.Fatalf("leaving; wrong value; g=%v k=%v wanted=%v got=%v",
-					g, keys[i], vals[i], v)
-			}
-			vals[i] = strconv.Itoa(rand.Int())
-			ck.Put(keys[i], vals[i])
-		}
-	}
-
-	fmt.Printf("  ... Passed\n")
-}
-
-func doConcurrent(t *testing.T, unreliable bool) {
-	tc := setup(t, "concurrent-"+strconv.FormatBool(unreliable), unreliable)
-	defer tc.cleanup()
-
-	for i := 0; i < len(tc.groups); i++ {
-		tc.join(i)
-	}
-
-	const npara = 11
-	var ca [npara]chan bool
-	for i := 0; i < npara; i++ {
-		ca[i] = make(chan bool)
-		go func(me int) {
-			ok := true
-			defer func() { ca[me] <- ok }()
-			ck := tc.clerk()
-			mymck := tc.shardclerk()
-			key := strconv.Itoa(me)
-			last := ""
-			for iters := 0; iters < 3; iters++ {
-				nv := strconv.Itoa(rand.Int())
-				ck.Append(key, nv)
-				last = last + nv
-				v := ck.Get(key)
-				if v != last {
-					ok = false
-					t.Fatalf("Get(%v) expected %v got %v\n", key, last, v)
-				}
-
-				gi := rand.Int() % len(tc.groups)
-				gid := tc.groups[gi].gid
-				mymck.Move(rand.Int()%shardmaster.NShards, gid)
-
-				time.Sleep(time.Duration(rand.Int()%30) * time.Millisecond)
-			}
-		}(i)
-	}
-
-	for i := 0; i < npara; i++ {
-		x := <-ca[i]
-		if x == false {
-			t.Fatalf("something is wrong")
-		}
-	}
-}
-
-func TestConcurrent(t *testing.T) {
-	fmt.Printf("Test: Concurrent Put/Get/Move ...\n")
-	doConcurrent(t, false)
-	fmt.Printf("  ... Passed\n")
-}
-
-func TestConcurrentUnreliable(t *testing.T) {
-	fmt.Printf("Test: Concurrent Put/Get/Move (unreliable) ...\n")
-	doConcurrent(t, true)
 	fmt.Printf("  ... Passed\n")
 }
