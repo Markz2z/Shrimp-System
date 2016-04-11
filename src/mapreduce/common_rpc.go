@@ -12,8 +12,8 @@ import (
 // scheduled on it.
 type DoTaskArgs struct {
 	JobName    string
-	File       string   // the file to process
-	Phase      jobPhase // are we in mapPhase or reducePhase?
+	File       string	       // the file to process
+	Phase      jobPhase  // are we in mapPhase or reducePhase?
 	TaskNumber int      // this task's index in the current phase
 
 	// NumOtherPhase is the total number of tasks in other phase; mappers
