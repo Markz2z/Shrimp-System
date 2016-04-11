@@ -29,6 +29,11 @@ func doReduce(
 			log.Fatal("Open error: ", err)
 		}
 		dec := json.NewDecoder(file)
+		//iterate each pairs in the file
+		//append the pair's Value for which has the same Key
+		//e.g. before reduce: ["a", "1"] ["b", "2"] ["a", "3"] ["b", "5"] ["c", "6"]
+		//     after reduce:  ["a", ["1", "3"] ["b", ["2", "5"]] ["c", ["6"]]
+		//send this result to reduceF(user-defined)
 		for {
 			var kv KeyValue
 			err := dec.Decode(&kv)
@@ -36,7 +41,6 @@ func doReduce(
 				break	
 			}
 			_, ok := keyValues[kv.Key]
-			//first time insert key to map
 			if !ok {
 				keyValues[kv.Key] = make([]string, 0)
 			}
@@ -53,14 +57,14 @@ func doReduce(
 	sort.Strings(keys)
 	mergeFileName := mergeName(jobName, reduceTaskNumber)
 	debug("DEBUG[doReduce]: mergeFileName: %v\n", mergeFileName)
-	file, err := os.Create(mergeFileName)
+	merge_file, err := os.Create(mergeFileName)
 	if err != nil {
 		log.Fatal("ERROR[doReduce]: Create file error: ", err)
 	}
-	enc := json.NewEncoder(file)
+	enc := json.NewEncoder(merge_file)
 	for _, k := range keys {
 		res := reduceF(k, keyValues[k])
 		enc.Encode(&KeyValue{k, res})
 	}
-	file.Close()
+	merge_file.Close()
 }

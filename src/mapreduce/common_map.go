@@ -18,7 +18,7 @@ func doMap(
 	mapF func(file string, contents string) []KeyValue,
 ) {
 	//1.Read the input file
-	//2.Call mapF split the input file into Key/Value pairs
+	//2.Call mapF(user-defined) split the input file into Key/Value pairs
 	//3.Iterate the Key/Value pairs nReduce time
 	//   3.1 Create nReduce intermediate files
 	//   3.2 Hash the Key to get the corrsponding file
@@ -33,6 +33,9 @@ func doMap(
 	if err != nil {
 		log.Fatal("ERROR[doMap]: Get file state error ", err);
 	}
+
+	//create a buffer, read the file into buffer
+	//buffer is used to send argument for mapF
 	fileSize := fileInfo.Size()
 	buf := make([]byte, fileSize)
 	_, err = file.Read(buf)
@@ -40,20 +43,29 @@ func doMap(
 	if err != nil {
 		log.Fatal("ERROR[doMap]:Read error ", err)
 	}
+
+	//mapF is a user-defined function to process the data
+	//it will return a middle result
 	middle_res := mapF(inFile, string(buf))
 	rSize := len(middle_res)
 	debug("DEBUG[doMap]: Map result pair size %d\n", rSize)
 	file.Close()
+
 	for i:=0;i<nReduce;i++ {
+		//create a file name according to [1]jobName [2]mapTaskNumber [3]i
 		fileName := reduceName(jobName, mapTaskNumber, i)
 		debug("DEBUG[doMap]: Map intermediate filename: %s\n", fileName)
 		mid_file, err := os.Create(fileName)
 		if err != nil {
 			log.Fatal("ERROR[doMap]: Create intermediate file fail ", err)
 		}
+		//create an encoder for the middle file
+		//encode each key/value pairs in middle_res into the intermediate file(mid_file)
 		enc := json.NewEncoder(mid_file)
 		for r:=0;r<rSize;r++ {
 			kv := middle_res[r]
+			//hash the Key to determine which intermediate file it is located.
+			//pairs with same Key will store in the same intermediate file
 			if ihash(kv.Key) % uint32(nReduce) == uint32(i) {
 				err := enc.Encode(&kv)
 				if err != nil {
