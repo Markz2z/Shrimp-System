@@ -41,7 +41,6 @@ func (mr *Master) schedule(phase jobPhase) {
 				ok := call(worker, "Worker.DoTask", &args, new(struct{}))
 				if ok {
 					go func() {
-
 						mr.registerChannel <-worker
 					}()
 					break

@@ -15,6 +15,7 @@ import (
 // and the value is the file's contents. The return value should be a slice of
 // key/value pairs, each represented by a mapreduce.KeyValue.
 func mapF(document string, value string) (res []mapreduce.KeyValue) {
+	//a tokenizer to split value by space
 	values := strings.FieldsFunc(value, func(c rune) bool {
 		return !unicode.IsLetter(c);
 	})

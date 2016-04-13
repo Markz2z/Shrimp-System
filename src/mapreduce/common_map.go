@@ -37,8 +37,8 @@ func doMap(
 	//create a buffer, read the file into buffer
 	//buffer is used to send argument for mapF
 	fileSize := fileInfo.Size()
-	buf := make([]byte, fileSize)
-	_, err = file.Read(buf)
+	buffer := make([]byte, fileSize)
+	_, err = file.Read(buffer)
 	debug("DEBUG[doMap]: Read from %s %dbyte\n", inFile, fileSize)
 	if err != nil {
 		log.Fatal("ERROR[doMap]:Read error ", err)
@@ -46,13 +46,13 @@ func doMap(
 
 	//mapF is a user-defined function to process the data
 	//it will return a middle result
-	middle_res := mapF(inFile, string(buf))
+	middle_res := mapF(inFile, string(buffer))
 	rSize := len(middle_res)
 	debug("DEBUG[doMap]: Map result pair size %d\n", rSize)
 	file.Close()
 
 	for i:=0;i<nReduce;i++ {
-		//create a file name according to [1]jobName [2]mapTaskNumber [3]i
+		//create an intermediate file according to [1]jobName [2]mapTaskNumber [3]i
 		fileName := reduceName(jobName, mapTaskNumber, i)
 		debug("DEBUG[doMap]: Map intermediate filename: %s\n", fileName)
 		mid_file, err := os.Create(fileName)
