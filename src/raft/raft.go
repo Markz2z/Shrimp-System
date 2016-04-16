@@ -19,7 +19,9 @@ package raft
 
 import "sync"
 import "labrpc"
-
+import "sync"
+import "time"
+import "math/rand"
 // import "bytes"
 // import "encoding/gob"
 
@@ -37,19 +39,34 @@ type ApplyMsg struct {
 	Snapshot    []byte // ignore for lab2; only used in lab3
 }
 
+type Log struct {
+	LogEntry []string
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex
-	peers     []*labrpc.ClientEnd
-	persister *Persister
-	me        int // index into peers[]
+	mu             	sync.Mutex
+	peers         	[]*labrpc.ClientEnd
+	persister    	*Persister
+	me             	int // index into peers[]
 
-	// Your data here.
-	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
+	//persistent state on all server
+	currentTerm 	int
+	voteFor      	int
+	log              	Log
+	
+	//volatile state on all server
+	commitIndex 	int
+	lastApplied 	int
+	
+	//volatile state on leader
+	nextIndex   	[]int
+	matchIndex 	[]int
 
+	timeout	time.Duration
+	heartbeatChan 	chan bool
 }
 
 // return currentTerm and whether this server
@@ -187,11 +204,21 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 
-	// Your initialization code here.
+	rf.currentTerm = 0
+	rf.voteFor = 0
+	rf.log = make([]interface{})
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.state = StateFollower
+	rf.nextIndex = 0
+	rf.matchIndex = 0
+
+	rf.timeout = (150 + rand.Intn(100)) * time.Millisecond
+
+	go rf.hearbeat()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
 
 	return rf
 }
