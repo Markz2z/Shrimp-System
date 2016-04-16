@@ -22,7 +22,7 @@ import "labrpc"
 import "sync"
 import "time"
 import "math/rand"
-// import "bytes"
+import "bytes"
 // import "encoding/gob"
 
 
@@ -39,9 +39,14 @@ type ApplyMsg struct {
 	Snapshot    []byte // ignore for lab2; only used in lab3
 }
 
-type Log struct {
-	LogEntry []string
-}
+const (
+	stopped 	= "stopped"
+	Initialized 	= "initialized"
+	Follower 	= "follower"
+	Candidate 	= "candidate"
+	Leader 		= "leader"
+	SnapShotting 	= "snapshotting"
+)
 
 //
 // A Go object implementing a single Raft peer.
@@ -55,16 +60,17 @@ type Raft struct {
 	//persistent state on all server
 	currentTerm 	int
 	voteFor      	int
-	log              	Log
-	
+	log              	[]interface{}
+
 	//volatile state on all server
 	commitIndex 	int
 	lastApplied 	int
-	
+
 	//volatile state on leader
 	nextIndex   	[]int
 	matchIndex 	[]int
 
+	state 		string
 	timeout	time.Duration
 	heartbeatChan 	chan bool
 }
@@ -75,7 +81,8 @@ func (rf *Raft) GetState() (int, bool) {
 
 	var term int
 	var isleader bool
-	// Your code here.
+	term = currentTerm
+
 	return term, isleader
 }
 
@@ -114,21 +121,41 @@ func (rf *Raft) readPersist(data []byte) {
 // example RequestVote RPC arguments structure.
 //
 type RequestVoteArgs struct {
-	// Your data here.
+	Term 		int
+	CandidateId 	int
+	LastLogIndex	int
+	LastLogTerm	int
 }
 
 //
 // example RequestVote RPC reply structure.
 //
 type RequestVoteReply struct {
-	// Your data here.
+	Term 		int
+	VoteGranted	bool
 }
 
 //
 // example RequestVote RPC handler.
 //
-func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here.
+func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
+	
+	if args.Term < rf.currentTerm {
+		reply = &RequestVoteReply {
+			rf.currentTerm, false
+		}
+		return
+	}
+
+	_, term = GetState()
+
+	lastIdx, lastTerm := rf.getLastEntry()
+	arg = &RequestVote {
+		Term:		term
+		Candidate:	
+		LastLogIndex:	lastIdx
+		LastLogTerm:	lastTerm
+	}
 }
 
 //
@@ -186,6 +213,19 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
+//heartbeat
+func (rf *Raft)hearbeat() {
+	for {
+		if rf.state == "follower" {
+			select {
+			case <-time.After(rf.timeout):
+				rf.changeToCandidate()
+			case <-
+			}
+		}
+	}
+}
+
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -209,7 +249,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.log = make([]interface{})
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-	rf.state = StateFollower
+	rf.state = Follower
 	rf.nextIndex = 0
 	rf.matchIndex = 0
 
