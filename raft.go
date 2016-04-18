@@ -17,23 +17,15 @@ package raft
 //   in the same server.
 //
 
-import (
-	//"fmt"
-	"labrpc"
-	"math/rand"
-	"sync"
-	"time"
-)
-
-// import "bytes"
+import "sync"
+import "labrpc"
+import "sync"
+import "time"
+import "math/rand"
+import "bytes"
 // import "encoding/gob"
-type StateType int
 
-const (
-	StateFollower StateType = iota
-	StateCandidate
-	StateLeader
-)
+
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -47,29 +39,42 @@ type ApplyMsg struct {
 	Snapshot    []byte // ignore for lab2; only used in lab3
 }
 
+const (
+	Stopped			= "stopped"
+	Initialized 	= "initialized"
+	Follower 		= "follower"
+	Candidate 		= "candidate"
+	Leader 			= "leader"
+	SnapShotting 	= "snapshotting"
+)
+
 //
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex
-	peers     []*labrpc.ClientEnd
-	persister *Persister
-	me        int // index into peers[]
+	mu             	sync.Mutex
+	peers         	[]*labrpc.ClientEnd
+	persister    	*Persister
+	me             	int // index into peers[]
 
 	//persistent state on all server
-	currentTerm int
-	voteFor     int
-	log         []interface{}
-	//volatile state on all server
-	commitIndex int
-	lastApplied int
-	//volatile state on leader
-	nextIndex  []int
-	matchIndex []int
+	currentTerm 	int
+	voteFor      	int
+	log             []interface{}
 
-	state   StateType
-	timeout time.Duration
-	heartbeatChan chan bool
+	//volatile state on all server
+	commitIndex 	int
+	lastApplied 	int
+
+	//volatile state on leader
+	nextIndex   	[]int
+	matchIndex 		[]int
+
+	state	   		string
+	timeout			time.Duration
+	heartbeatChan 	chan bool
+
+	isLeader_ 		bool
 }
 
 // return currentTerm and whether this server
@@ -78,7 +83,8 @@ func (rf *Raft) GetState() (int, bool) {
 
 	var term int
 	var isleader bool
-	// Your code here.
+	term = currentTerm
+	isleader = isLeader_
 	return term, isleader
 }
 
@@ -110,69 +116,59 @@ func (rf *Raft) readPersist(data []byte) {
 	// d.Decode(&rf.yyy)
 }
 
+
+
+
 //
 // example RequestVote RPC arguments structure.
 //
 type RequestVoteArgs struct {
-	// Your data here.
-	Term         int
-	CandidateId  int
-	LastLogIndex int
-	LastLogTerm  int
+	Term 			int
+	CandidateId 	int
+	LastLogIndex	int
+	LastLogTerm		int
 }
 
 //
 // example RequestVote RPC reply structure.
 //
 type RequestVoteReply struct {
-	// Your data here.
-	Term        int
-	VoteGranted bool
+	Term 		int
+	VoteGranted	bool
 }
 
 //
-//AppendEntries RPC arguments
+// example RequestVote RPC handler.
 //
-type AppendEntriesArgs struct {
-	Term         int
-	LeaderId     int
-	PrevLogIndex int
-	PrevLogTerm  int
-	Entries      []interface{}
-	LeaderCommit int
-}
-
-type AppendEntriesReply struct {
-	Term    int
-	Success bool
-}
-
-//
-//  RPC handler.
-//
-func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here.
+func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
+	
 	if args.Term < rf.currentTerm {
-		reply = &RequestVoteReply{rf.currentTerm, false}
+		reply = &RequestVoteReply {
+			rf.currentTerm, false
+		}
 		return
 	}
 
-	if (rf.voteFor == 0 || rf.voteFor == args.CandidateId) &&
-		(args.LastLogIndex >= rf.lastApplied) {
-		reply = &RequestVoteReply{rf.currentTerm, true}
-	}
-}
+	_, term = GetState()
 
-func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.heartbeatChan <- true
+	lastIdx, lastTerm := rf.getLastEntry()
+	arg = &RequestVote {
+		Term:			term
+		Candidate:	
+		LastLogIndex:	lastIdx
+		LastLogTerm:	lastTerm
+	}
 }
 
 //
 // example code to send a RequestVote RPC to a server.
 // server is the index of the target server in rf.peers[].
 // expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should probably
+// fills in *reply with RPC reply, so caller should
 // pass &reply.
+// the types of the args and reply passed to Call() must be
+// the same as the types of the arguments declared in the
+// handler function (including whether they are pointers).
 //
 // returns true if labrpc says the RPC was delivered.
 //
@@ -186,31 +182,6 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 	return ok
 }
 
-func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.AppendEntriesArgs", args, reply)
-	return ok
-}
-
-//
-//
-//
-//
-func (rf *Raft) heartbeat() {
-	for {
-		if rf.state == StateFollower {
-			select {
-			case <-time.After(rf.timeout):
-				rf.changeToCandidate()
-			
-			}
-		}
-	}
-
-}
-
-func (rf *Raft) changeToCandidate() {
-	
-}
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -243,6 +214,19 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
+//heartbeat
+func (rf *Raft)hearbeat() {
+	for {
+		if rf.state == "follower" {
+			select {
+			case <-time.After(rf.timeout):
+				rf.changeToCandidate()
+			case <-
+			}
+		}
+	}
+}
+
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -251,6 +235,8 @@ func (rf *Raft) Kill() {
 // save its persistent state, and also initially holds the most
 // recent saved state, if any. applyCh is a channel on which the
 // tester or service expects Raft to send ApplyMsg messages.
+// Make() must return quickly, so it should start goroutines
+// for any long-running work.
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
@@ -259,23 +245,21 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 
-	// all server
 	rf.currentTerm = 0
 	rf.voteFor = 0
-	rf.log = make([]interface{}, 10)
+	rf.log = make([]interface{})
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-	rf.state = StateFollower
+	rf.state = Follower
+	rf.nextIndex = 0
+	rf.matchIndex = 0
 
-	//for leader
-	rf.nextIndex = make([]int, 5) //?
-	rf.matchIndex = make([]int, 5)
+	rf.isLeader_ = false
 
-	rf.state = StateFollower
+	rf.timeout = (150 + rand.Intn(100)) * time.Millisecond
 
-	//heartbeat
-	rf.timeout = (time.Duration(rand.Int63n(150)) + 150) * time.Millisecond
-	go rf.heartbeat()
+	go rf.hearbeat()
+
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
