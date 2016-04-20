@@ -1,2 +1,2 @@
-export "GOPATH=$PWD"
-cd "$GOPATH/src/main"
+source ~/.profile
+export GOPATH=/home/ustczmk/MIT6.824/
