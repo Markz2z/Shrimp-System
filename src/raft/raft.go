@@ -23,7 +23,7 @@ import "sync"
 import "time"
 import "math/rand"
 import "bytes"
-// import "encoding/gob"
+import "encoding/gob"
 
 
 
@@ -40,12 +40,12 @@ type ApplyMsg struct {
 }
 
 const (
-	STOPPED			= "stopped"
-	INITIALIZED 	= "initialized"
-	FOLLOWER 		= "follower"
-	CANDIDATE 		= "candidate"
-	LEADER 			= "leader"
-	SNAPSHOTTING 	= "snapshotting"
+	STOPPED         = "stopped"
+	INITIALIZED     = "initialized"
+	FOLLOWER        = "follower"
+	CANDIDATE       = "candidate"
+	LEADER          = "leader"
+	SNAPSHOTTING    = "snapshotting"
 )
 
 
@@ -58,16 +58,16 @@ const (
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu             	sync.Mutex
-	peers         	[]*labrpc.ClientEnd
-	persister    	*Persister
-	me             	int // index into peers[]
+	mu              sync.Mutex
+	peers           []*labrpc.ClientEnd
+	persister       *Persister
+	me              int // index into peers[]
 
 	//persistent state on all server
-	currentTerm 	int
-	voteFor      	int
+	currentTerm     int
+	votedFor        int
 	logs            []interface{}
-	logs_term		[]int
+	logs_term       []int
 
 	//volatile state on all server
 	commitIndex 	int
@@ -80,8 +80,9 @@ type Raft struct {
 	state	   		string
 	applyCh			chan ApplyMsg
 
+    //count of being voted
 	granted_votes_count int
-	timer			*time.Timer
+	timer           *time.Timer
 }
 
 // return currentTerm and whether this server
@@ -120,8 +121,6 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 
-
-
 //
 // example RequestVote RPC arguments structure.
 //
@@ -149,7 +148,7 @@ func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 	may_grant_vote := true
 	if len(rf.logs) > 0 {
-		//I.current server's log must not newer that the candidate
+		//I.current server's log must not newer than the candidate
 		//II.if the term of current server is the same as the candidate
 		//   the candidate must have more logs than current server
 		//Or current server will never vote for this candidate
@@ -185,7 +184,7 @@ func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		if may_grant_vote {
-			rf.voteFor = args.CandidateId
+			rf.votedFor = args.CandidateId
 			rf.persist()
 		}
 		rf.resetTimer()
@@ -197,7 +196,34 @@ func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if reply.Term < rf.currentTerm {
+		DEBUG("[ERROR] Reply Term%v is old than Raft%v currentTerm%v\n", reply.Term, rf.me, rf.currentTerm)
+		return
+	}
+
+	if reply.Term > rf.currentTerm {
+		rf.currentTerm = reply.Term
+		rf.state = FOLLOWER
+		rf.votedFor = -1
+		rf.resetTimer()
+		return
+	}
+
+	if reply.Term == rf.currentTerm && rf.state == CANDIDATE && reply.VoteGranted{
+		rf.granted_votes_count += 1
+		if rf.granted_votes_count > majority(len(rf.peers)) {
+			rf.state = LEADER
+			for i:=0 ;i < len(rf.peers); ++i {
+				rf.nextIndex[i] = len(rf.logs)
+				rf.matchIndex[i] = 0
+			}
+			rf.resetTimer()
+		}
+		return
+	}
 }
 
 //
@@ -219,7 +245,7 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
 	req_args := RequestVoteArgs{
-		Term:	rf.currentTerm,
+		Term:			rf.currentTerm,
 		CandidateId:	rf.me,
 		LastLogIndex:	len(rf.logs) - 1,
 	}
@@ -312,7 +338,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	rf.currentTerm = 0
-	rf.voteFor = 0
+	rf.votedFor = 0
 	rf.log = make([]interface{})
 	rf.commitIndex = 0
 	rf.lastApplied = 0
