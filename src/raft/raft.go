@@ -211,7 +211,7 @@ func majority(n int) int {
 	return n/2+1;
 }
 
-func (rf *Raft) handleVotesResult(reply RequestVoteReply) {
+func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -259,27 +259,13 @@ func (rf *Raft) handleVotesResult(reply RequestVoteReply) {
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 //
-func (rf *Raft) sendRequestVote(){
-	args := RequestVoteArgs{
-		Term:            rf.currentTerm,
-		CandidateId:     rf.me,
-		LastLogIndex:    len(rf.logs) - 1,
-	}
-	if(args.LastLogIndex > 0) {
-		args.LastLogTerm = rf.logs_term[len(rf.logs) - 1]
-	}
-	for peer := 0; peer < len(rf.peers); peer+=1 {
-		if peer == rf.me {
-			continue
-		}
+func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply){
 		go func(idx int) {
-			var reply RequestVoteReply;
-			ok := rf.peers[idx].Call("Raft.RequestVote", args, &reply)
+			ok := rf.peers[idx].Call("Raft.RequestVote", args, reply)
 			if ok {
 				rf.handleVotesResult(reply)
 			}
-		}(peer)
-	}
+		}(server)
 }
 
 
@@ -334,7 +320,22 @@ func (rf *Raft) handleTimer() {
 		rf.currentTerm += 1
 		rf.votedFor = rf.me
 		rf.persist()
-		rf.sendRequestVote()
+		args := RequestVoteArgs{
+			Term:            rf.currentTerm,
+			CandidateId:     rf.me,
+			LastLogIndex:    len(rf.logs) - 1,
+		}
+		if(args.LastLogIndex > 0) {
+			args.LastLogTerm = rf.logs_term[len(rf.logs) - 1]
+		}
+		//rf.sendRequestVote()
+		for server := 0; server < len(rf.peers);server += 1 {
+			if server == rf.me {
+				continue
+			}
+			var reply RequestVoteReply
+			rf.sendRequestVote(server, args, &reply)
+		}
 		rf.granted_votes_count = 1
 	} else {
 		//rf.sendAppendEntriesAll()
