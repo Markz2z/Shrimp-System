@@ -19,12 +19,22 @@ package raft
 
 import "sync"
 import "labrpc"
-import "sync"
 import "time"
 import "math/rand"
 import "bytes"
 import "encoding/gob"
+import "fmt"
 
+// Debugging enabled?
+const debugEnabled = false
+
+// DPrintf will only print if the debugEnabled const has been set to true
+func debug(format string, a ...interface{}) (n int, err error) {
+	if debugEnabled {
+		n, err = fmt.Printf(format, a...)
+	}
+	return
+}
 
 
 //
@@ -88,7 +98,7 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-	return currentTerm, state==LEADER
+	return rf.currentTerm, rf.state==LEADER
 }
 
 //
@@ -143,7 +153,7 @@ type RequestVoteReply struct {
 //[Lost Vote]1.Reply false if candidate's term is less than currentTerm
 //[Grant Vote]2.if votedFor is null or candidate's id,  and candidate's log is at least as up-to-date as receiver's log, grant vote
 //
-func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	may_grant_vote := true
@@ -159,17 +169,17 @@ func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 				may_grant_vote = false
 		}
 	}
-	DEBUG("Got vote request from %v, may grant vote to %v\n", args, may_grant_vote)
+	debug("Got vote request from %v, may grant vote to %v\n", args, may_grant_vote)
 
 	if args.Term < rf.currentTerm {
-		DEBUG("Got vote request vote with term %v is rejceted\n", args.Term)
+		debug("Got vote request vote with term %v is rejceted\n", args.Term)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
 	}
 
 	if args.Term == rf.currentTerm {
-		DEBUG("vote for %v\n", rf.votedFor)
+		debug("vote for %v\n", rf.votedFor)
 		//one machine could only vote for one machine
 		if rf.votedFor == -1 && may_grant_vote {
 			rf.votedFor = args.CandidateId
@@ -181,8 +191,8 @@ func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	}
  
 	if args.Term > rf.currentTerm {
-		DEBUG("Got vote request with term %v follow it\n", args.Term)
-		rf.state = Follower
+		debug("Got vote request with term %v follow it\n", args.Term)
+		rf.state = FOLLOWER
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		if may_grant_vote {
@@ -197,12 +207,16 @@ func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	}
 }
 
-func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
+func majority(n int) int {
+	return n/2+1;
+}
+
+func (rf *Raft) handleVotesResult(reply RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	if reply.Term < rf.currentTerm {
-		DEBUG("[ERROR] Reply Term%v is old than Raft%v currentTerm%v\n", reply.Term, rf.me, rf.currentTerm)
+		debug("[ERROR] Reply Term%v is old than Raft%v currentTerm%v\n", reply.Term, rf.me, rf.currentTerm)
 		return
 	}
 
@@ -218,7 +232,7 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 		rf.granted_votes_count += 1
 		if rf.granted_votes_count > majority(len(rf.peers)) {
 			rf.state = LEADER
-			for i:=0 ;i < len(rf.peers); ++i {
+			for i:=0 ;i < len(rf.peers); i+=1 {
 				rf.nextIndex[i] = len(rf.logs)
 				rf.matchIndex[i] = 0
 			}
@@ -245,29 +259,27 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 //
-func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
-	req_args := RequestVoteArgs{
-		Term:                 rf.currentTerm,
+func (rf *Raft) sendRequestVote(){
+	args := RequestVoteArgs{
+		Term:            rf.currentTerm,
 		CandidateId:     rf.me,
 		LastLogIndex:    len(rf.logs) - 1,
 	}
-	if(req_args.LastLogIndex > 0) {
-		req_args.LastLogTerm = rf.logs_term[LastLogIndex]
+	if(args.LastLogIndex > 0) {
+		args.LastLogTerm = rf.logs_term[len(rf.logs) - 1]
 	}
-
-	for peer := 0; peer < len(rf.peers); ++peer {
+	for peer := 0; peer < len(rf.peers); peer+=1 {
 		if peer == rf.me {
 			continue
 		}
 		go func(idx int) {
 			var reply RequestVoteReply;
-			ok := rf.peers[idx].Call("Raft.requestVote", req_args, &reply)
+			ok := rf.peers[idx].Call("Raft.RequestVote", args, &reply)
 			if ok {
 				rf.handleVotesResult(reply)
 			}
 		}(peer)
 	}
-	return ok
 }
 
 
@@ -322,24 +334,10 @@ func (rf *Raft) handleTimer() {
 		rf.currentTerm += 1
 		rf.votedFor = rf.me
 		rf.persist()
-		//rf.sendRequestVote()
-		for peer := 0; peer < len(rf.peers); ++peer {
-			if peer == rf.me {
-				continue
-			}
-			go func(idx int) {
-				var reply RequestVoteReply;
-				ok := rf.sendRequestVote(idx, RequestVoteArgs{}, RequestVoteReply{})
-				if ok {
-					DEBUG("Succeed to send request from server[%v] to server[%v]\n", rf.me, idx);
-				}else {
-					DEBUG("Fail to send request from server[%v] to server[%v]\n", rf.me, idx);
-				}
-			}(peer)
-		}
+		rf.sendRequestVote()
 		rf.granted_votes_count = 1
 	} else {
-		rf.sendAppendEntriesAll()
+		//rf.sendAppendEntriesAll()
 	}
 	rf.resetTimer()
 }
@@ -349,7 +347,7 @@ func (rf *Raft) handleTimer() {
 //
 func (rf *Raft) resetTimer() {
 	if rf.timer == nil {
-		rf.timer == time.NewTimer(time.Millisecond * 10000)
+		rf.timer = time.NewTimer(time.Millisecond * 10000)
 		go func() {
 			for {
 				<-rf.timer.C
@@ -359,7 +357,7 @@ func (rf *Raft) resetTimer() {
 	}
 	new_timeout := HeartbeatCycle
 	if rf.state != LEADER {
-		new_timeout = time.Millisecond * (ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
+		new_timeout = time.Millisecond * time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
 	}
 	rf.timer.Reset(new_timeout)
 }
@@ -383,7 +381,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.currentTerm = 0
 	rf.votedFor = 0
-	rf.log = make([]interface{})
+	rf.logs = make([]interface{}, 0)
+	rf.logs_term = make([]int, 0)
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.state = FOLLOWER

@@ -1,0 +1,1 @@
+export GOPATH=/Users/ustczmk/GitReporsitory/MIT6.824
