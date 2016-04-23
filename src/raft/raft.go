@@ -48,12 +48,12 @@ const (
 	SNAPSHOTTING    = "snapshotting"
 )
 
-
 const (
-	HEARTBEAT_INTERVAL = time.Millisecond * 50
-	MAX_TIMEOUT = time.Millisecond * 500
-	MIN_TIMEOUT = time.Millisecond * 200
+	HeartbeatCycle = time.Millisecond * 50;
+	ElectionMinTime = 150;
+	ElectionMaxTime = 300; 
 )
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -140,24 +140,26 @@ type RequestVoteReply struct {
 }
 
 //
-// example RequestVote RPC handler.
+//[Lost Vote]1.Reply false if candidate's term is less than currentTerm
+//[Grant Vote]2.if votedFor is null or candidate's id,  and candidate's log is at least as up-to-date as receiver's log, grant vote
 //
 func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
 	may_grant_vote := true
+
+	//detect whether should vote to this candidate
 	if len(rf.logs) > 0 {
 		//I.current server's log must not newer than the candidate
 		//II.if the term of current server is the same as the candidate
 		//   the candidate must have more logs than current server
 		//Or current server will never vote for this candidate
-		if rf.logs_term[len(rf.logs)-1] > args.LastLogTerm ||
-			(rf.logs_term[len(rf.logs)-1] == args.LastLogTerm && len(rf.logs) > args.LastLogIndex) {
+		if rf.logs_term[len(rf.logs) - 1] > args.LastLogTerm ||
+			(rf.logs_term[len(rf.logs)-1] == args.LastLogTerm && len(rf.logs) - 1 > args.LastLogIndex) {
 				may_grant_vote = false
 		}
 	}
-	DEBUG("Got vote request frome %v, may grant vote to %v\n", args, may_grant_vote)
+	DEBUG("Got vote request from %v, may grant vote to %v\n", args, may_grant_vote)
 
 	if args.Term < rf.currentTerm {
 		DEBUG("Got vote request vote with term %v is rejceted\n", args.Term)
@@ -171,13 +173,13 @@ func (rf *Raft) requestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		//one machine could only vote for one machine
 		if rf.votedFor == -1 && may_grant_vote {
 			rf.votedFor = args.CandidateId
-			rf,persist()
+			rf.persist()
 		}
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
 		reply.Term = rf.currentTerm
 		return
 	}
-
+ 
 	if args.Term > rf.currentTerm {
 		DEBUG("Got vote request with term %v follow it\n", args.Term)
 		rf.state = Follower
@@ -245,9 +247,9 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
 	req_args := RequestVoteArgs{
-		Term:			rf.currentTerm,
-		CandidateId:	rf.me,
-		LastLogIndex:	len(rf.logs) - 1,
+		Term:                 rf.currentTerm,
+		CandidateId:     rf.me,
+		LastLogIndex:    len(rf.logs) - 1,
 	}
 	if(req_args.LastLogIndex > 0) {
 		req_args.LastLogTerm = rf.logs_term[LastLogIndex]
@@ -283,11 +285,20 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-	return index, term, isLeader
+	if rf.state != LEADER {
+		return -1, -1, false
+	}
+
+	index := rf.lastApplied
+	term := rf.currentTerm
+	rf.logs = append(rf.logs, command)
+	rf.logs_term = append(rf.logs_term, rf.currentTerm)
+	rf.persist()
+
+	return index, term, true
 }
 
 //
@@ -299,11 +310,46 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
+//
+//Follower don't get a Heartbeat Response from the Leader
+//
+func (rf *Raft) handleTimer() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if rf.state != LEADER {
+		rf.state = CANDIDATE
+		rf.currentTerm += 1
+		rf.votedFor = rf.me
+		rf.persist()
+		//rf.sendRequestVote()
+		for peer := 0; peer < len(rf.peers); ++peer {
+			if peer == rf.me {
+				continue
+			}
+			go func(idx int) {
+				var reply RequestVoteReply;
+				ok := rf.sendRequestVote(idx, RequestVoteArgs{}, RequestVoteReply{})
+				if ok {
+					DEBUG("Succeed to send request from server[%v] to server[%v]\n", rf.me, idx);
+				}else {
+					DEBUG("Fail to send request from server[%v] to server[%v]\n", rf.me, idx);
+				}
+			}(peer)
+		}
+		rf.granted_votes_count = 1
+	} else {
+		rf.sendAppendEntriesAll()
+	}
+	rf.resetTimer()
+}
+//
 //Heartbeat
+//generate a random value for every server between 150~300
+//
 func (rf *Raft) resetTimer() {
 	if rf.timer == nil {
-		rf.timer == time.NewTimer(time.Hour)
+		rf.timer == time.NewTimer(time.Millisecond * 10000)
 		go func() {
 			for {
 				<-rf.timer.C
@@ -311,11 +357,9 @@ func (rf *Raft) resetTimer() {
 			}
 		}()
 	}
-	new_timeout := HEARTBEAT_INTERVAL
+	new_timeout := HeartbeatCycle
 	if rf.state != LEADER {
-		//generate a random value, becasuse every Follower's cycle is different
-		val, _ := crand.Int(crand.Reader, big.NewInt(Int64(MAX_TIMEOUT - MIN_TIMEOUT)))
-		new_timeout = MIN_TIMEOUT + time.Duration(val.Int64())
+		new_timeout = time.Millisecond * (ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
 	}
 	rf.timer.Reset(new_timeout)
 }
