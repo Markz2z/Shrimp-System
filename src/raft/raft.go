@@ -26,7 +26,7 @@ import "encoding/gob"
 import "fmt"
 
 // Debugging enabled?
-const debugEnabled = false
+const debugEnabled = true
 
 // DPrintf will only print if the debugEnabled const has been set to true
 func debug(format string, a ...interface{}) (n int, err error) {
@@ -60,8 +60,8 @@ const (
 
 const (
 	HeartbeatCycle = time.Millisecond * 50;
-	ElectionMinTime = 150;
-	ElectionMaxTime = 300; 
+	ElectionMinTime = 500;
+	ElectionMaxTime = 800; 
 )
 
 //
@@ -169,17 +169,17 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 				may_grant_vote = false
 		}
 	}
-	debug("Got vote request from %v, may grant vote to %v\n", args, may_grant_vote)
+	//debug("Got vote request from %v, may grant vote to %v\n", args, may_grant_vote)
 
 	if args.Term < rf.currentTerm {
-		debug("Got vote request vote with term %v is rejceted\n", args.Term)
+		//debug("Got vote request vote with term %v is rejceted\n", args.Term)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
 	}
 
 	if args.Term == rf.currentTerm {
-		debug("vote for %v\n", rf.votedFor)
+		//debug("vote for %v\n", rf.votedFor)
 		//one machine could only vote for one machine
 		if rf.votedFor == -1 && may_grant_vote {
 			rf.votedFor = args.CandidateId
@@ -191,7 +191,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	}
  
 	if args.Term > rf.currentTerm {
-		debug("Got vote request with term %v follow it\n", args.Term)
+		//debug("Got vote request with term %v follow it\n", args.Term)
 		rf.state = FOLLOWER
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
@@ -216,7 +216,7 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 
 	if reply.Term < rf.currentTerm {
-		debug("[ERROR] Reply Term%v is old than Raft%v currentTerm%v\n", reply.Term, rf.me, rf.currentTerm)
+		//debug("[ERROR] Reply Term%v is old than Raft%v currentTerm%v\n", reply.Term, rf.me, rf.currentTerm)
 		return
 	}
 
@@ -228,10 +228,12 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 		return
 	}
 
-	if reply.Term == rf.currentTerm && rf.state == CANDIDATE && reply.VoteGranted{
+	//reply.Term == rf.currentTerm &&
+	if rf.state == CANDIDATE && reply.VoteGranted {
 		rf.granted_votes_count += 1
 		if rf.granted_votes_count > majority(len(rf.peers)) {
 			rf.state = LEADER
+			debug("server[%v] is Leader Now!\n", rf.me);
 			for i:=0 ;i < len(rf.peers); i+=1 {
 				rf.nextIndex[i] = len(rf.logs)
 				rf.matchIndex[i] = 0
@@ -260,12 +262,12 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply){
-		go func(idx int) {
-			ok := rf.peers[idx].Call("Raft.RequestVote", args, reply)
-			if ok {
-				rf.handleVotesResult(reply)
-			}
-		}(server)
+	go func(idx int) {
+		ok := rf.peers[idx].Call("Raft.RequestVote", args, reply)
+		if ok {
+			rf.handleVotesResult(reply)
+		}
+	}(server)
 }
 
 
@@ -290,13 +292,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 
-	index := rf.lastApplied
-	term := rf.currentTerm
+	index := len(rf.logs)
 	rf.logs = append(rf.logs, command)
 	rf.logs_term = append(rf.logs_term, rf.currentTerm)
 	rf.persist()
 
-	return index, term, true
+	return index + 1, rf.currentTerm, rf.state==LEADER
 }
 
 //
@@ -306,8 +307,71 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 // turn off debug output from this instance.
 //
 func (rf *Raft) Kill() {
-	// Your code here, if desired.
+	
 }
+
+type AppendEntryArgs struct {
+	Term        	int
+	Leader_id   	int
+	prevLogIndex	int
+	prevLogTerm		int
+	entries 		[]interface{}
+	leaderCommit	int
+}
+
+type AppendEntryReply struct {
+	Term    		int
+	Success 		bool
+}
+
+func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.currentTerm {
+		reply.Success = false
+		reply.Term = rf.currentTerm
+	} else {
+		rf.state = FOLLOWER
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+
+		reply.Term = args.Term
+
+		if(len(rf.logs) < args.prevLogIndex || rf.logs_term[args.prevLogIndex] != args.prevLogTerm) {
+			reply.Success = false
+			reply.Term = rf.currentTerm
+			return
+		}
+		if(len(rf.logs) > args.prevLogIndex && rf.logs_term[args.prevLogIndex+1] < args.Term) {
+
+		}
+	}
+	rf.persist()
+	rf.resetTimer()
+}
+
+//
+//Handle AppendEntry result
+//
+func (rf *Raft) handleAppendEntries(reply *AppendEntryReply) {
+
+}
+
+
+//
+//Send AppendEntry Function
+//Always call from Leader to Followers
+//
+func (rf *Raft) sendAppendEntries(server int, args AppendEntryArgs, reply *AppendEntryReply) {
+	go func(idx int) {
+		ok := rf.peers[idx].Call("Raft.AppendEntries", args, reply)
+		if ok {
+			rf.handleAppendEntries(reply)
+		}
+	}(server)
+}
+
 //
 //Follower don't get a Heartbeat Response from the Leader
 //
@@ -319,16 +383,22 @@ func (rf *Raft) handleTimer() {
 		rf.state = CANDIDATE
 		rf.currentTerm += 1
 		rf.votedFor = rf.me
+		//rf.granted_votes_count = 1
 		rf.persist()
 		args := RequestVoteArgs{
 			Term:            rf.currentTerm,
 			CandidateId:     rf.me,
-			LastLogIndex:    len(rf.logs) - 1,
 		}
-		if(args.LastLogIndex > 0) {
-			args.LastLogTerm = rf.logs_term[len(rf.logs) - 1]
+
+		if(len(rf.logs) > 0) {
+			args.LastLogIndex = len(rf.logs) - 1;
+			args.LastLogTerm = rf.logs_term[args.LastLogIndex]
+		}else {
+			args.LastLogIndex = 0
+			args.LastLogTerm = 0
 		}
-		//rf.sendRequestVote()
+
+		rf.granted_votes_count = 1
 		for server := 0; server < len(rf.peers);server += 1 {
 			if server == rf.me {
 				continue
@@ -336,9 +406,35 @@ func (rf *Raft) handleTimer() {
 			var reply RequestVoteReply
 			rf.sendRequestVote(server, args, &reply)
 		}
-		rf.granted_votes_count = 1
+		//rf.granted_votes_count = 1
 	} else {
-		//rf.sendAppendEntriesAll()
+		// for server := 0;server < len(rf.peers); server += 1 {
+		// 	if(server==rf.me) {
+		// 		continue
+		// 	}
+		// 	var reply AppendEntryReply
+		// 	args := AppendEntryArgs {
+		// 	    Term:           rf.currentTerm,
+		// 	    Leader_id:      rf.me,
+		// 	    prevLogIndex:   rf.nextIndex[server] - 1,
+		// 	    leaderCommit:   rf.commitIndex,
+		//     }
+		//     if rf.nextIndex[server] - 1 > 0 {
+		//     	args.prevLogTerm = rf.logs_term[rf.nextIndex[server] - 1]
+		//     }
+		//     if rf.nextIndex[server] < len(rf.logs) {
+		//     	args.entries = rf.logs[rf.nextIndex[server]:]
+		//     }
+		// 	rf.sendAppendEntries(server, args, &reply)
+		// }
+		for server := 0;server < len(rf.peers); server += 1 {
+			if(server == rf.me) {
+				continue
+			}
+			go func(int idx) {
+				rf.Call("Raft.resetTimer")
+			}
+		}
 	}
 	rf.resetTimer()
 }
@@ -356,9 +452,11 @@ func (rf *Raft) resetTimer() {
 			}
 		}()
 	}
+	//debug("server[%v] is timeout!!!\n", rf.me);
 	new_timeout := HeartbeatCycle
 	if rf.state != LEADER {
 		new_timeout = time.Millisecond * time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
+		debug("server[%v]'s random timeout is: %vms\n", rf.me, new_timeout)
 	}
 	rf.timer.Reset(new_timeout)
 }
@@ -381,7 +479,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	rf.currentTerm = 0
-	rf.votedFor = 0
+	rf.votedFor = -1
 	rf.logs = make([]interface{}, 0)
 	rf.logs_term = make([]int, 0)
 	rf.commitIndex = 0
