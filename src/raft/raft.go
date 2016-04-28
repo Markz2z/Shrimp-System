@@ -26,7 +26,7 @@ import "encoding/gob"
 import "fmt"
 
 // Debugging enabled?
-const debugEnabled = false
+const debugEnabled = true
 
 // DPrintf will only print if the debugEnabled const has been set to true
 func debug(format string, a ...interface{}) (n int, err error) {
@@ -350,7 +350,6 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){
 		rf.votedFor = -1
 
 		reply.Term = args.Term
-		debug("fuck1\n")
 		if len(rf.logs) - 1 < args.prevLogIndex || 
 					(args.prevLogIndex < len(rf.logs) && rf.logs_term[args.prevLogIndex] != args.prevLogTerm) {
 			debug("server[%v] prevLogIndex:%v  not equal log_length:%v\n", rf.me, args.prevLogIndex, len(rf.logs));
@@ -358,7 +357,6 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){
 			reply.Term = rf.currentTerm
             return
 		}
-		debug("fuck2\n")
         //If an existing entry conflicts with a new one (Entry with same index but different terms) 
         //delete the existing entry and all that follow it
         rf.logs = rf.logs[:args.prevLogIndex]
@@ -371,11 +369,9 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){
         }else {
         	rf.commitIndex = len(rf.logs) - 1
         }
-        debug("fuck3\n")
         if len(rf.logs) >= args.leaderCommit {
             go rf.commitLogs()
         }
-        debug("fuck4\n")
         reply.CommitIndex = rf.commitIndex
         reply.Success = true
 	}
@@ -529,7 +525,7 @@ func (rf *Raft) resetTimer() {
 			}
 		}()
 	}
-	//debug("server[%v] is timeout!!!\n", rf.me);
+	debug("server[%v] is timeout!!!\n", rf.me);
 	new_timeout := HeartbeatCycle
 	if rf.state != LEADER {
 		new_timeout = time.Millisecond * time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
