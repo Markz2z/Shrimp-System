@@ -364,12 +364,12 @@ func (rf *Raft) handleAppendEntries(reply *AppendEntryReply) {
 //Always call from Leader to Followers
 //
 func (rf *Raft) sendAppendEntries(server int, args AppendEntryArgs, reply *AppendEntryReply) {
-	go func(idx int, _args AppendEntryArgs, _reply *AppendEntryReply) {
-		ok := rf.peers[idx].Call("Raft.AppendEntries", _args, _reply)
+	go func(idx int) {
+		ok := rf.peers[idx].Call("Raft.AppendEntries", args, reply)
 		if ok {
-			rf.handleAppendEntries(_reply)
+			rf.handleAppendEntries(reply)
 		}
-	}(server, args, reply)
+	}(server)
 }
 
 //
@@ -408,33 +408,33 @@ func (rf *Raft) handleTimer() {
 		}
 		//rf.granted_votes_count = 1
 	} else {
-		for server := 0;server < len(rf.peers); server += 1 {
-			if(server==rf.me) {
-				continue
-			}
-			var reply AppendEntryReply
-			args := AppendEntryArgs {
-			    Term:           rf.currentTerm,
-			    Leader_id:      rf.me,
-			    prevLogIndex:   rf.nextIndex[server] - 1,
-			    leaderCommit:   rf.commitIndex,
-		    }
-		    if args.prevLogIndex > 0 {
-		    	args.prevLogTerm = rf.logs_term[args.prevLogIndex]
-		    }
-		    if rf.nextIndex[server] <= len(rf.logs) {
-		    	args.entries = rf.logs[rf.nextIndex[server]:]
-		    }
-			rf.sendAppendEntries(server, args, &reply)
-		}
 		// for server := 0;server < len(rf.peers); server += 1 {
-		// 	if(server == rf.me) {
+		// 	if(server==rf.me) {
 		// 		continue
 		// 	}
-		// 	go func(int idx) {
-		// 		rf.Call("Raft.resetTimer")
-		// 	}
+		// 	var reply AppendEntryReply
+		// 	args := AppendEntryArgs {
+		// 	    Term:           rf.currentTerm,
+		// 	    Leader_id:      rf.me,
+		// 	    prevLogIndex:   rf.nextIndex[server] - 1,
+		// 	    leaderCommit:   rf.commitIndex,
+		//     }
+		//     if rf.nextIndex[server] - 1 > 0 {
+		//     	args.prevLogTerm = rf.logs_term[rf.nextIndex[server] - 1]
+		//     }
+		//     if rf.nextIndex[server] < len(rf.logs) {
+		//     	args.entries = rf.logs[rf.nextIndex[server]:]
+		//     }
+		// 	rf.sendAppendEntries(server, args, &reply)
 		// }
+		for server := 0;server < len(rf.peers); server += 1 {
+			if(server == rf.me) {
+				continue
+			}
+			go func(int idx) {
+				rf.Call("Raft.resetTimer")
+			}
+		}
 	}
 	rf.resetTimer()
 }
