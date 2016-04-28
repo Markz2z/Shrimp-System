@@ -26,7 +26,7 @@ import "encoding/gob"
 import "fmt"
 
 // Debugging enabled?
-const debugEnabled = true
+const debugEnabled = false
 
 // DPrintf will only print if the debugEnabled const has been set to true
 func debug(format string, a ...interface{}) (n int, err error) {
@@ -60,8 +60,8 @@ const (
 
 const (
 	HeartbeatCycle = time.Millisecond * 50;
-	ElectionMinTime = 500;
-	ElectionMaxTime = 800; 
+	ElectionMinTime = 200;
+	ElectionMaxTime = 500; 
 )
 
 //
@@ -165,7 +165,8 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		//   the candidate must have more logs than current server
 		//Or current server will never vote for this candidate
 		if rf.logs_term[len(rf.logs) - 1] > args.LastLogTerm ||
-			(rf.logs_term[len(rf.logs)-1] == args.LastLogTerm && len(rf.logs) - 1 > args.LastLogIndex) {
+		   (rf.logs_term[len(rf.logs)-1] == args.LastLogTerm && 
+		   len(rf.logs) - 1 > args.LastLogIndex) {
 				may_grant_vote = false
 		}
 	}
@@ -186,6 +187,9 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			rf.persist()
 		}
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
+		if reply.VoteGranted {
+			debug("server[%v] is vote for server[%v]\n", rf.me, args.CandidateId)
+		}
 		reply.Term = rf.currentTerm
 		return
 	}
@@ -202,6 +206,9 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		rf.resetTimer()
 
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
+		if reply.VoteGranted {
+			debug("server[%v] is vote for server[%v]\n", rf.me, args.CandidateId)
+		}
 		reply.Term = args.Term
 		return
 	}
@@ -228,12 +235,11 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 		return
 	}
 
-	//reply.Term == rf.currentTerm &&
 	if rf.state == CANDIDATE && reply.VoteGranted {
 		rf.granted_votes_count += 1
-		if rf.granted_votes_count > majority(len(rf.peers)) {
+		if rf.granted_votes_count >= majority(len(rf.peers)) {
 			rf.state = LEADER
-			debug("server[%v] is Leader Now!\n", rf.me);
+			debug("server[%v] is Leader at Term%v!\n", rf.me, rf.currentTerm);
 			for i:=0 ;i < len(rf.peers); i+=1 {
 				rf.nextIndex[i] = len(rf.logs)
 				rf.matchIndex[i] = 0
@@ -262,12 +268,12 @@ func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply){
-	go func(idx int) {
-		ok := rf.peers[idx].Call("Raft.RequestVote", args, reply)
+	go func() {
+		ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 		if ok {
 			rf.handleVotesResult(reply)
 		}
-	}(server)
+	}()
 }
 
 
@@ -350,11 +356,13 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){
 		rf.votedFor = -1
 
 		reply.Term = args.Term
-		if len(rf.logs) - 1 < args.prevLogIndex || 
-					(args.prevLogIndex < len(rf.logs) && rf.logs_term[args.prevLogIndex] != args.prevLogTerm) {
-			debug("server[%v] prevLogIndex:%v  not equal log_length:%v\n", rf.me, args.prevLogIndex, len(rf.logs));
+		if args.prevLogIndex >= 0 && len(rf.logs) - 1 < args.prevLogIndex || 
+			rf.logs_term[args.prevLogIndex] != args.prevLogTerm {
+			//(args.prevLogIndex < len(rf.logs) && rf.logs_term[args.prevLogIndex] != args.prevLogTerm) {
+			//debug("server[%v] prevLogIndex:%v  not equal log_length:%v\n", rf.me, args.prevLogIndex, len(rf.logs));
             reply.Success = false
 			reply.Term = rf.currentTerm
+			rf.resetTimer()
             return
 		}
         //If an existing entry conflicts with a new one (Entry with same index but different terms) 
@@ -487,6 +495,7 @@ func (rf *Raft) handleTimer() {
 			rf.sendRequestVote(server, args, &reply)
 		}
 		rf.granted_votes_count = 1
+		debug("server[%v] is send vote request for it self at Term%v\n", rf.me, rf.currentTerm)
 	} else {
 		for server := 0;server < len(rf.peers); server += 1 {
 			if(server==rf.me) {
@@ -501,11 +510,14 @@ func (rf *Raft) handleTimer() {
 		    }
 		    if args.prevLogIndex > 0 {
 		    	args.prevLogTerm = rf.logs_term[args.prevLogIndex]
+		    }else {
+		    	args.prevLogTerm = -1
 		    }
 		    if rf.nextIndex[server] <= len(rf.logs) {
 		    	args.entries = rf.logs[rf.nextIndex[server]:]
                 args.entries_term = rf.logs_term[rf.nextIndex[server]:]
 		    }
+		    debug("server[%v] is send heartbeat at Term%v\n", rf.me, rf.currentTerm)
 			rf.sendAppendEntries(server, args, &reply)
 		}
 	}
@@ -525,7 +537,6 @@ func (rf *Raft) resetTimer() {
 			}
 		}()
 	}
-	debug("server[%v] is timeout!!!\n", rf.me);
 	new_timeout := HeartbeatCycle
 	if rf.state != LEADER {
 		new_timeout = time.Millisecond * time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
