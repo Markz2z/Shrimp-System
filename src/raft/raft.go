@@ -303,7 +303,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.logs_term = append(rf.logs_term, rf.currentTerm)
 	rf.persist()
 
-	return index + 1, rf.currentTerm, rf.state==LEADER
+	return index, rf.currentTerm, rf.state==LEADER
 }
 
 //
@@ -357,31 +357,34 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){
 
 		reply.Term = args.Term
 		if args.prevLogIndex >= 0 && len(rf.logs) - 1 < args.prevLogIndex || 
-			rf.logs_term[args.prevLogIndex] != args.prevLogTerm {
-			//(args.prevLogIndex < len(rf.logs) && rf.logs_term[args.prevLogIndex] != args.prevLogTerm) {
-			//debug("server[%v] prevLogIndex:%v  not equal log_length:%v\n", rf.me, args.prevLogIndex, len(rf.logs));
+		    rf.logs_term[args.prevLogIndex] != args.prevLogTerm {
+		    var j int
+			for j=len(rf.logs)-1;j>=0;j--{
+				if rf.logs_term[j]==args.prevLogTerm {
+					break;
+				}
+			}
+			reply.CommitIndex = j
             reply.Success = false
-			reply.Term = rf.currentTerm
-			rf.resetTimer()
-            return
-		}
-        //If an existing entry conflicts with a new one (Entry with same index but different terms) 
-        //delete the existing entry and all that follow it
-        rf.logs = rf.logs[:args.prevLogIndex]
-        rf.logs_term = rf.logs_term[:args.prevLogIndex]
-        rf.logs = append(rf.logs, args.entries...)
-        rf.logs_term = append(rf.logs_term, args.entries_term...)
+		}else {
+	        //If an existing entry conflicts with a new one (Entry with same index but different terms) 
+	        //delete the existing entry and all that follow it
+	        rf.logs = rf.logs[:args.prevLogIndex]
+	        rf.logs_term = rf.logs_term[:args.prevLogIndex]
+	        rf.logs = append(rf.logs, args.entries...)
+	        rf.logs_term = append(rf.logs_term, args.entries_term...)
 
-        if args.leaderCommit < len(rf.logs) - 1 {
-        	rf.commitIndex = args.leaderCommit
-        }else {
-        	rf.commitIndex = len(rf.logs) - 1
-        }
-        if len(rf.logs) >= args.leaderCommit {
-            go rf.commitLogs()
-        }
-        reply.CommitIndex = rf.commitIndex
-        reply.Success = true
+	        if args.leaderCommit < len(rf.logs) - 1 {
+	        	rf.commitIndex = args.leaderCommit
+	        }else {
+	        	rf.commitIndex = len(rf.logs) - 1
+	        }
+	        if len(rf.logs) >= args.leaderCommit {
+	            go rf.commitLogs()
+	        }
+	        reply.CommitIndex = rf.commitIndex
+	        reply.Success = true
+	    }
 	}
 	rf.persist()
 	rf.resetTimer()
@@ -390,7 +393,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){
 //
 //Handle AppendEntry result
 //
-func (rf *Raft) handleAppendEntries(reply *AppendEntryReply, idx int, prevLogIdxLast int) {
+func (rf *Raft) handleAppendEntries(reply *AppendEntryReply, idx int) {
     rf.mu.Lock()
     defer rf.mu.Unlock()
 
@@ -427,25 +430,24 @@ func (rf *Raft) handleAppendEntries(reply *AppendEntryReply, idx int, prevLogIdx
         }
     }else {
         var args AppendEntryArgs
-        if(prevLogIdxLast > 0 ) {
+        if(reply.CommitIndex >= 0 ) {
             args = AppendEntryArgs {
-                Term:        rf.currentTerm,
-                Leader_id:   rf.me,
-                prevLogIndex: prevLogIdxLast - 1,
+                Term:         rf.currentTerm,
+                Leader_id:    rf.me,
+                prevLogIndex: reply.CommitIndex,
                 leaderCommit: rf.commitIndex,
-                prevLogTerm:  rf.logs_term[prevLogIdxLast - 1],
+                prevLogTerm:  rf.logs_term[reply.CommitIndex],
             }
             go func() {
                 var reply AppendEntryReply
                 ok := rf.peers[idx].Call("Raft.AppendEntries", args, &reply)
                 if ok {
-                    rf.handleAppendEntries(&reply, idx, prevLogIdxLast - 1)
+                    rf.handleAppendEntries(&reply, idx)
                 }
             }()
         }
     }
 }
-
 
 //
 //Send AppendEntry Function
@@ -455,7 +457,7 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntryArgs, reply *Appen
 	go func(idx int) {
 		ok := rf.peers[idx].Call("Raft.AppendEntries", args, reply)
 		if ok {
-			rf.handleAppendEntries(reply, idx, args.prevLogIndex)
+			rf.handleAppendEntries(reply, idx)
 		}
 	}(server)
 }
