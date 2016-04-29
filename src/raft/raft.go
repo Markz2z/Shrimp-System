@@ -130,7 +130,6 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
-
 //
 // example RequestVote RPC arguments structure.
 //

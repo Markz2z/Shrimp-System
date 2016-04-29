@@ -14,10 +14,11 @@ Append	kvraft/client.go	/^func (ck *Clerk) Append(key string, value string) {$/;
 Append	paxos-shardkv/client.go	/^func (ck *Clerk) Append(key string, value string) {$/;"	f
 Append	pbservice/client.go	/^func (ck *Clerk) Append(key string, value string) {$/;"	f
 Append	shardkv/client.go	/^func (ck *Clerk) Append(key string, value string) {$/;"	f
-AppendEntries	raft/raft.go	/^func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {$/;"	f
-AppendEntriesArgs	raft/raft.go	/^type AppendEntriesArgs struct {$/;"	t
-AppendEntriesReply	raft/raft.go	/^type AppendEntriesReply struct {$/;"	t
+AppendEntries	raft/raft.go	/^func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply){$/;"	f
+AppendEntryArgs	raft/raft.go	/^type AppendEntryArgs struct {$/;"	t
+AppendEntryReply	raft/raft.go	/^type AppendEntryReply struct {$/;"	t
 ApplyMsg	raft/raft.go	/^type ApplyMsg struct {$/;"	t
+CANDIDATE	raft/raft.go	/^	FOLLOWER        = "follower"$/;"	c
 Call	labrpc/labrpc.go	/^func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bool {$/;"	f
 CleanupFiles	mapreduce/master_splitmerge.go	/^func (mr *Master) CleanupFiles() {$/;"	f
 Clerk	diskv/client.go	/^type Clerk struct {$/;"	t
@@ -65,6 +66,8 @@ Distributed	mapreduce/master.go	/^func Distributed(jobName string, files []strin
 DoTask	mapreduce/worker.go	/^func (wk *Worker) DoTask(arg *DoTaskArgs, _ *struct{}) error {$/;"	f
 DoTaskArgs	mapreduce/common_rpc.go	/^type DoTaskArgs struct {$/;"	t
 Done	paxos/paxos.go	/^func (px *Paxos) Done(seq int) {$/;"	f
+ElectionMaxTime	raft/raft.go	/^	ElectionMinTime = 200;$/;"	c
+ElectionMinTime	raft/raft.go	/^	HeartbeatCycle = time.Millisecond * 50;$/;"	c
 Enable	labrpc/labrpc.go	/^func (rn *Network) Enable(endname interface{}, enabled bool) {$/;"	f
 Err	diskv/common.go	/^type Err string$/;"	t
 Err	kvpaxos/common.go	/^type Err string$/;"	t
@@ -83,6 +86,7 @@ ErrWrongGroup	diskv/common.go	/^	ErrNoKey      = "ErrNoKey"$/;"	c
 ErrWrongGroup	paxos-shardkv/common.go	/^	ErrNoKey      = "ErrNoKey"$/;"	c
 ErrWrongGroup	shardkv/common.go	/^	ErrNoKey      = "ErrNoKey"$/;"	c
 ErrWrongServer	pbservice/common.go	/^	ErrNoKey       = "ErrNoKey"$/;"	c
+FOLLOWER	raft/raft.go	/^	INITIALIZED     = "initialized"$/;"	c
 Fate	paxos/paxos.go	/^type Fate int$/;"	t
 Forgotten	paxos/paxos.go	/^	Pending        \/\/ not yet decided.$/;"	c
 GenericTest	kvraft/test_test.go	/^func GenericTest(t *testing.T, tag string, nclients int, unreliable bool, crash bool, partitions bool, maxraftstate int) {$/;"	f
@@ -123,6 +127,8 @@ Handler2	labrpc/test_test.go	/^func (js *JunkServer) Handler2(args int, reply *s
 Handler3	labrpc/test_test.go	/^func (js *JunkServer) Handler3(args int, reply *int) {$/;"	f
 Handler4	labrpc/test_test.go	/^func (js *JunkServer) Handler4(args *JunkArgs, reply *JunkReply) {$/;"	f
 Handler5	labrpc/test_test.go	/^func (js *JunkServer) Handler5(args JunkArgs, reply *JunkReply) {$/;"	f
+HeartbeatCycle	raft/raft.go	/^const ($/;"	c
+INITIALIZED	raft/raft.go	/^	STOPPED         = "stopped"$/;"	c
 IsServerDead	labrpc/labrpc.go	/^func (rn *Network) IsServerDead(endname interface{}, servername interface{}, server *Server) bool {$/;"	f
 Join	paxos-shardmaster/client.go	/^func (ck *Clerk) Join(gid int64, servers []string) {$/;"	f
 Join	paxos-shardmaster/server.go	/^func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {$/;"	f
@@ -144,6 +150,7 @@ Kill	raft/raft.go	/^func (rf *Raft) Kill() {$/;"	f
 Kill	shardkv/server.go	/^func (kv *ShardKV) Kill() {$/;"	f
 Kill	shardmaster/server.go	/^func (sm *ShardMaster) Kill() {$/;"	f
 Kill	viewservice/server.go	/^func (vs *ViewServer) Kill() {$/;"	f
+LEADER	raft/raft.go	/^	CANDIDATE       = "candidate"$/;"	c
 Leader	kvraft/config.go	/^func (cfg *config) Leader() (bool, int) {$/;"	f
 Leader	shardmaster/config.go	/^func (cfg *config) Leader() (bool, int) {$/;"	f
 Leave	paxos-shardmaster/client.go	/^func (ck *Clerk) Leave(gid int64) {$/;"	f
@@ -164,6 +171,7 @@ LogSize	shardmaster/config.go	/^func (cfg *config) LogSize() int {$/;"	f
 LongDelays	labrpc/labrpc.go	/^func (rn *Network) LongDelays(yes bool) {$/;"	f
 LongReordering	labrpc/labrpc.go	/^func (rn *Network) LongReordering(yes bool) {$/;"	f
 Make	paxos/paxos.go	/^func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {$/;"	f
+Make	raft/raft.go	/^func Make(peers []*labrpc.ClientEnd, me int,$/;"	f
 MakeClerk	diskv/client.go	/^func MakeClerk(shardmasters []string) *Clerk {$/;"	f
 MakeClerk	kvpaxos/client.go	/^func MakeClerk(servers []string) *Clerk {$/;"	f
 MakeClerk	kvraft/client.go	/^func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {$/;"	f
@@ -276,6 +284,8 @@ RequestVote	raft/raft.go	/^func (rf *Raft) RequestVote(args RequestVoteArgs, rep
 RequestVoteArgs	raft/raft.go	/^type RequestVoteArgs struct {$/;"	t
 RequestVoteReply	raft/raft.go	/^type RequestVoteReply struct {$/;"	t
 RunWorker	mapreduce/worker.go	/^func RunWorker(MasterAddress string, me string,$/;"	f
+SNAPSHOTTING	raft/raft.go	/^	LEADER          = "leader"$/;"	c
+STOPPED	raft/raft.go	/^const ($/;"	c
 SaveRaftState	raft/persister.go	/^func (ps *Persister) SaveRaftState(data []byte) {$/;"	f
 SaveSnapshot	raft/persister.go	/^func (ps *Persister) SaveSnapshot(snapshot []byte) {$/;"	f
 Sequential	mapreduce/master.go	/^func Sequential(jobName string, files []string, nreduce int,$/;"	f
@@ -311,10 +321,6 @@ StartServer	shardkv/server.go	/^func StartServer(servers []*labrpc.ClientEnd, me
 StartServer	shardmaster/config.go	/^func (cfg *config) StartServer(i int) {$/;"	f
 StartServer	shardmaster/server.go	/^func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardMaster {$/;"	f
 StartServer	viewservice/server.go	/^func StartServer(me string) *ViewServer {$/;"	f
-StateCandidate	raft/raft.go	/^	StateFollower StateType = iota$/;"	c
-StateFollower	raft/raft.go	/^const ($/;"	c
-StateLeader	raft/raft.go	/^	StateCandidate$/;"	c
-StateType	raft/raft.go	/^type StateType int$/;"	t
 Status	paxos/paxos.go	/^func (px *Paxos) Status(seq int) (Fate, interface{}) {$/;"	f
 Test1	viewservice/test_test.go	/^func Test1(t *testing.T) {$/;"	f
 Test4Basic	diskv/test_test.go	/^func Test4Basic(t *testing.T) {$/;"	f
@@ -462,7 +468,6 @@ call	paxos-shardmaster/client.go	/^func call(srv string, rpcname string,$/;"	f
 call	paxos/paxos.go	/^func call(srv string, name string, args interface{}, reply interface{}) bool {$/;"	f
 call	pbservice/client.go	/^func call(srv string, rpcname string,$/;"	f
 call	viewservice/client.go	/^func call(srv string, rpcname string,$/;"	f
-changeToCandidate	raft/raft.go	/^func (rf *Raft) changeToCandidate() {$/;"	f
 check	kvpaxos/test_test.go	/^func check(t *testing.T, ck *Clerk, key string, value string) {$/;"	f
 check	kvraft/test_test.go	/^func check(t *testing.T, ck *Clerk, key string, value string) {$/;"	f
 check	mapreduce/test_test.go	/^func check(t *testing.T, files []string) {$/;"	f
@@ -497,6 +502,7 @@ cleanup	shardkv/config.go	/^func (cfg *config) cleanup() {$/;"	f
 cleanup	shardmaster/config.go	/^func (cfg *config) cleanup() {$/;"	f
 clerk	diskv/test_test.go	/^func (tc *tCluster) clerk() *Clerk {$/;"	f
 clerk	paxos-shardkv/test_test.go	/^func (tc *tCluster) clerk() *Clerk {$/;"	f
+commitLogs	raft/raft.go	/^func (rf *Raft) commitLogs() {$/;"	f
 config	kvraft/config.go	/^type config struct {$/;"	t
 config	raft/config.go	/^type config struct {$/;"	t
 config	shardkv/config.go	/^type config struct {$/;"	t
@@ -508,7 +514,9 @@ connectUnlocked	kvraft/config.go	/^func (cfg *config) connectUnlocked(i int, to 
 connectUnlocked	shardmaster/config.go	/^func (cfg *config) connectUnlocked(i int, to []int) {$/;"	f
 crash1	raft/config.go	/^func (cfg *config) crash1(i int) {$/;"	f
 debug	mapreduce/common.go	/^func debug(format string, a ...interface{}) (n int, err error) {$/;"	f
+debug	raft/raft.go	/^func debug(format string, a ...interface{}) (n int, err error) {$/;"	f
 debugEnabled	mapreduce/common.go	/^const debugEnabled = false$/;"	c
+debugEnabled	raft/raft.go	/^const debugEnabled = false$/;"	c
 decodeKey	diskv/server.go	/^func (kv *DisKV) decodeKey(filename string) (string, error) {$/;"	f
 deleteClient	kvraft/config.go	/^func (cfg *config) deleteClient(ck *Clerk) {$/;"	f
 deleteClient	shardkv/config.go	/^func (cfg *config) deleteClient(ck *Clerk) {$/;"	f
@@ -536,7 +544,9 @@ filePut	diskv/server.go	/^func (kv *DisKV) filePut(shard int, key string, conten
 fileReadShard	diskv/server.go	/^func (kv *DisKV) fileReadShard(shard int) map[string]string {$/;"	f
 fileReplaceShard	diskv/server.go	/^func (kv *DisKV) fileReplaceShard(shard int, m map[string]string) {$/;"	f
 group	shardkv/config.go	/^type group struct {$/;"	t
-heartbeat	raft/raft.go	/^func (rf *Raft) heartbeat() {$/;"	f
+handleAppendEntries	raft/raft.go	/^func (rf *Raft) handleAppendEntries(reply *AppendEntryReply, idx int, prevLogIdxLast int) {$/;"	f
+handleTimer	raft/raft.go	/^func (rf *Raft) handleTimer() {$/;"	f
+handleVotesResult	raft/raft.go	/^func (rf *Raft) handleVotesResult(reply *RequestVoteReply) {$/;"	f
 ihash	mapreduce/common_map.go	/^func ihash(s string) uint32 {$/;"	f
 internalChurn	raft/test_test.go	/^func internalChurn(t *testing.T, unreliable bool) {$/;"	f
 isdead	diskv/server.go	/^func (kv *DisKV) isdead() bool {$/;"	f
@@ -596,6 +606,7 @@ main	main/viewd.go	/^func main() {$/;"	f
 main	main/viewd.go	/^package main$/;"	p
 main	main/wc.go	/^func main() {$/;"	f
 main	main/wc.go	/^package main$/;"	p
+majority	raft/raft.go	/^func majority(n int) int {$/;"	f
 makeClient	kvraft/config.go	/^func (cfg *config) makeClient(to []int) *Clerk {$/;"	f
 makeClient	shardkv/config.go	/^func (cfg *config) makeClient() *Clerk {$/;"	f
 makeClient	shardmaster/config.go	/^func (cfg *config) makeClient(to []int) *Clerk {$/;"	f
@@ -692,12 +703,13 @@ register	mapreduce/worker.go	/^func (wk *Worker) register(master string) {$/;"	f
 removeFile	mapreduce/master_splitmerge.go	/^func removeFile(n string) {$/;"	f
 replyMsg	labrpc/labrpc.go	/^type replyMsg struct {$/;"	t
 reqMsg	labrpc/labrpc.go	/^type reqMsg struct {$/;"	t
+resetTimer	raft/raft.go	/^func (rf *Raft) resetTimer() {$/;"	f
 rpcCount	raft/config.go	/^func (cfg *config) rpcCount(server int) int {$/;"	f
 run	mapreduce/master.go	/^func (mr *Master) run(jobName string, files []string, nreduce int,$/;"	f
 run_client	kvraft/test_test.go	/^func run_client(t *testing.T, cfg *config, me int, ca chan bool, fn func(me int, ck *Clerk, t *testing.T)) {$/;"	f
 schedule	mapreduce/schedule.go	/^func (mr *Master) schedule(phase jobPhase) {$/;"	f
-sendAppendEntries	raft/raft.go	/^func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *RequestVoteReply) bool {$/;"	f
-sendRequestVote	raft/raft.go	/^func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {$/;"	f
+sendAppendEntries	raft/raft.go	/^func (rf *Raft) sendAppendEntries(server int, args AppendEntryArgs, reply *AppendEntryReply) {$/;"	f
+sendRequestVote	raft/raft.go	/^func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply){$/;"	f
 servername	shardkv/config.go	/^func (cfg *config) servername(gid int, i int) string {$/;"	f
 setlongreordering	raft/config.go	/^func (cfg *config) setlongreordering(longrel bool) {$/;"	f
 setunreliable	kvpaxos/server.go	/^func (kv *KVPaxos) setunreliable(what bool) {$/;"	f
