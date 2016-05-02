@@ -348,8 +348,8 @@ func (rf *Raft) commitLogs() {
 func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	debug("AppendEntries prevLogIndex:%v prevLogTerm:%v Leader_id:%v\n", 
-		args.PrevLogIndex, args.PrevLogTerm, args.Leader_id)
+	debug("AppendEntries prevLogIndex:%v prevLogTerm:%v Leader_id:%v Leader_commit_index:%v\n", 
+		args.PrevLogIndex, args.PrevLogTerm, args.Leader_id, args.LeaderCommit)
     //return false if term < currentTerm
 	if args.Term < rf.currentTerm {
 		debug("arg.Term(%v) < rf.currentTerm(%v)\n", args.Term, rf.currentTerm)
@@ -360,10 +360,9 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		reply.Term = args.Term
-		//first synchronized
-		if args.PrevLogIndex >= 0 && 
+		//fffirst synchronized
+		if args.PrevLogIndex >= 0 &&
 			(len(rf.logs) - 1 < args.PrevLogIndex || rf.logs_term[args.PrevLogIndex] != args.PrevLogTerm) {
-		    //debug("args.prevLogTerm:%v args.prevLogIndex:%v len(rf.logs):%v\n", args.prevLogTerm, args.prevLogIndex, len(rf.logs))
 		    debug("got into fuck\n")
 		    reply.CommitIndex = len(rf.logs) - 1
 			for reply.CommitIndex>=0 {
@@ -382,10 +381,8 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 	        rf.logs = append(rf.logs, args.Entries...)
 	        rf.logs_term = append(rf.logs_term, args.Entries_term...)
 	        debug("server[%v] success commit\n", rf.me)
-	        if len(rf.logs) >= args.LeaderCommit {
-	        	rf.commitIndex = args.LeaderCommit
-	            go rf.commitLogs()
-	        }
+	        rf.commitIndex = args.LeaderCommit
+	        go rf.commitLogs()
 	        reply.CommitIndex = rf.commitIndex
 	        reply.Success = true
 	    }
@@ -459,10 +456,14 @@ func (rf *Raft) handleAppendEntries(reply AppendEntryReply, idx int) {
                 reply_count += 1
             }
         }
+        debug("leader commit reply_count:%v rf.commitIndex:%v rf.matchIndex:%v\n", 
+        	reply_count, rf.commitIndex, rf.matchIndex[idx])
+        debug("leader commit mathchIndex term:%v currentTerm:%v\n", rf.logs_term[rf.matchIndex[idx]], rf.currentTerm)
         if reply_count >= majority(len(rf.peers)) &&
-           rf.commitIndex < rf.matchIndex[idx] &&
-           (rf.matchIndex[idx] == -1 && rf.logs_term[rf.matchIndex[idx]]==rf.currentTerm) {
+           rf.commitIndex <= rf.matchIndex[idx] &&
+           (rf.matchIndex[idx] == -1 || rf.logs_term[rf.matchIndex[idx]]==rf.currentTerm) {
             rf.commitIndex = rf.matchIndex[idx]
+            debug("leader commit log until log[%v]\n", rf.commitIndex)
             go rf.commitLogs()
         }
     }else {
@@ -498,7 +499,7 @@ func (rf *Raft) handleTimer() {
 		rf.state = CANDIDATE
 		rf.currentTerm += 1
 		rf.votedFor = rf.me
-		//rf.granted_votes_count = 1
+		rf.granted_votes_count = 1
 		rf.persist()
 		args := RequestVoteArgs{
 			Term:            rf.currentTerm,
@@ -510,7 +511,6 @@ func (rf *Raft) handleTimer() {
 			args.LastLogTerm = rf.logs_term[args.LastLogIndex]
 		}
 
-		rf.granted_votes_count = 1
 		for server := 0; server < len(rf.peers);server += 1 {
 			if server == rf.me {
 				continue
