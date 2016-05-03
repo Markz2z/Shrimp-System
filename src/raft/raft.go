@@ -26,7 +26,7 @@ import "encoding/gob"
 import "fmt"
 
 // Debugging enabled?
-const debugEnabled = true
+const debugEnabled = false
 
 // DPrintf will only print if the debugEnabled const has been set to true
 func debug(format string, a ...interface{}) (n int, err error) {
@@ -79,8 +79,9 @@ type Raft struct {
 	logs            []interface{}
 	logs_term       []int
 
-	//volatile state on all server
+	//last index of logs which should be commited at currtent server
 	commitIndex 	int
+	//last index of logs which already be commited at current server
 	lastApplied		int
 
 	//volatile state on leader
@@ -184,7 +185,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		}
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
 		if reply.VoteGranted {
-			debug("server[%v] is vote for server[%v]\n", rf.me, args.CandidateId)
+			debug("server[%v] is vote for server[%v] at Term:%v\n", rf.me, args.CandidateId, rf.currentTerm)
 		}
 		reply.Term = rf.currentTerm
 		return
@@ -202,7 +203,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
 		if reply.VoteGranted {
-			debug("server[%v] is vote for server[%v]\n", rf.me, args.CandidateId)
+			debug("server[%v] is vote for server[%v] at Term:%v\n", rf.me, args.CandidateId, rf.currentTerm)
 		}
 		reply.Term = args.Term
 		return
@@ -233,13 +234,14 @@ func (rf *Raft) handleVotesResult(reply RequestVoteReply) {
 		rf.granted_votes_count += 1
 		if rf.granted_votes_count >= majority(len(rf.peers)) {
 			rf.state = LEADER
-			debug("server[%v] is Leader at Term%v!\n", rf.me, rf.currentTerm);
+			debug("server[%v] is Leader at Term%v\n", rf.me, rf.currentTerm);
+			debug("server has %v logs\n", len(rf.logs))
 			for i:=0 ;i < len(rf.peers); i+=1 {
 				if(i==rf.me) {
 					continue
 				}
 				rf.nextIndex[i] = len(rf.logs)
-				rf.matchIndex[i] = 0
+				rf.matchIndex[i] = -1
 			}
 			rf.resetTimer()
 		}
@@ -334,15 +336,15 @@ func (rf *Raft) commitLogs() {
     rf.mu.Lock()
     defer rf.mu.Unlock()
 
-    debug("server[%v] lastApplied:%v commitIndex:%v\n", rf.me, rf.lastApplied, rf.commitIndex)
-    real_commit := rf.commitIndex
-    if real_commit > len(rf.logs) - 1 {
-    	real_commit = len(rf.logs) - 1
+    if rf.commitIndex > len(rf.logs) - 1 {
+    	rf.commitIndex = len(rf.logs) - 1
     }
-    for i:=rf.lastApplied + 1;i <= real_commit;i++ {
+
+    debug("server[%v] lastApplied:%v commitIndex:%v\n", rf.me, rf.lastApplied, rf.commitIndex)
+    for i:=rf.lastApplied + 1;i <= rf.commitIndex;i++ {
         rf.applyCh <- ApplyMsg{ Index:i+1, Command: rf.logs[i] }
     }
-    rf.lastApplied = real_commit
+    rf.lastApplied = rf.commitIndex
 }
 
 func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
@@ -363,28 +365,41 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 		//fffirst synchronized
 		if args.PrevLogIndex >= 0 &&
 			(len(rf.logs) - 1 < args.PrevLogIndex || rf.logs_term[args.PrevLogIndex] != args.PrevLogTerm) {
-		    debug("got into fuck\n")
+		    debug("mismatch %v\n", args)
 		    reply.CommitIndex = len(rf.logs) - 1
+		    if reply.CommitIndex > args.PrevLogIndex {
+		    	reply.CommitIndex = args.PrevLogIndex
+		    }
 			for reply.CommitIndex>=0 {
 				if rf.logs_term[reply.CommitIndex]==args.PrevLogTerm {
 					break
 				}
 				reply.CommitIndex--
 			}
-			//debug("reply.CommitIndex:%v\n", reply.CommitIndex)
             reply.Success = false
-		}else {
+		}else if args.Entries!=nil {
 	        //If an existing entry conflicts with a new one (Entry with same index but different terms) 
 	        //delete the existing entry and all that follow it
+	        //reply.CommitIndex is the fucking guy who stand for the server's log size
 	        rf.logs = rf.logs[:args.PrevLogIndex + 1]
 	        rf.logs_term = rf.logs_term[:args.PrevLogIndex + 1]
 	        rf.logs = append(rf.logs, args.Entries...)
 	        rf.logs_term = append(rf.logs_term, args.Entries_term...)
 	        debug("server[%v] success commit\n", rf.me)
-	        rf.commitIndex = args.LeaderCommit
-	        go rf.commitLogs()
-	        reply.CommitIndex = rf.commitIndex
+	        if len(rf.logs) - 1 >= args.LeaderCommit {
+	        	rf.commitIndex = args.LeaderCommit
+	        	go rf.commitLogs()
+	        }
+        	reply.CommitIndex = len(rf.logs)
 	        reply.Success = true
+	    }else {
+	    	debug("args.Entries is nil\n")
+	    	if len(rf.logs) - 1 >= args.LeaderCommit {
+	    		rf.commitIndex = args.LeaderCommit
+	    		go rf.commitLogs()
+	    	}
+	    	reply.CommitIndex = args.PrevLogIndex
+	    	reply.Success = true
 	    }
 	}
 	rf.persist()
@@ -420,6 +435,7 @@ func (rf *Raft) SendAppendEntriesToAllFollwer() {
 			args.Entries_term = nil
 		}
 		args.LeaderCommit = rf.commitIndex
+		debug("leader server[%v] send appendEntry to all follower commitIndex:%v\n", rf. me, rf.commitIndex)
 		rf.SendAppendEntryToFollower(i, args)
 	}
 }
@@ -456,35 +472,36 @@ func (rf *Raft) handleAppendEntries(reply AppendEntryReply, idx int) {
                 reply_count += 1
             }
         }
-        debug("leader commit reply_count:%v rf.commitIndex:%v rf.matchIndex:%v\n", 
-        	reply_count, rf.commitIndex, rf.matchIndex[idx])
-        debug("leader commit mathchIndex term:%v currentTerm:%v\n", rf.logs_term[rf.matchIndex[idx]], rf.currentTerm)
+        debug("leader server[%v] reply_count:%v rf.commitIndex:%v rf.matchIndex:%v\n", 
+        	rf.me, reply_count, rf.commitIndex, rf.matchIndex[idx])
+        //debug("leader commit matchIndex term:%v currentTerm:%v\n", rf.logs_term[rf.matchIndex[idx]], rf.currentTerm)
         if reply_count >= majority(len(rf.peers)) &&
-           rf.commitIndex <= rf.matchIndex[idx] &&
-           (rf.matchIndex[idx] == -1 || rf.logs_term[rf.matchIndex[idx]]==rf.currentTerm) {
-            rf.commitIndex = rf.matchIndex[idx]
+           rf.commitIndex < rf.matchIndex[idx] &&
+		   rf.logs_term[rf.matchIndex[idx]]==rf.currentTerm {
+           	rf.commitIndex = rf.matchIndex[idx]
             debug("leader commit log until log[%v]\n", rf.commitIndex)
             go rf.commitLogs()
         }
     }else {
     	rf.nextIndex[idx] = reply.CommitIndex + 1
-		var args AppendEntryArgs
-		args.Term = rf.currentTerm
-		args.Leader_id = rf.me
-		args.PrevLogIndex = reply.CommitIndex
-		debug("fuckk prevLogIndex:%v\n", reply.CommitIndex)
-		if(args.PrevLogIndex >= 0) {
-			args.PrevLogTerm = rf.logs_term[args.PrevLogIndex]
-			args.Entries = rf.logs[args.PrevLogIndex:]
-			args.Entries_term = rf.logs_term[args.PrevLogIndex:]
-		}else {
-			//args.PrevLogIndex = -1
-			args.PrevLogTerm = -1
-			args.Entries = rf.logs
-			args.Entries_term = rf.logs_term
-		}
-		args.LeaderCommit = rf.commitIndex
-    	rf.SendAppendEntryToFollower(idx, args)
+		// var args AppendEntryArgs
+		// args.Term = rf.currentTerm
+		// args.Leader_id = rf.me
+		// args.PrevLogIndex = reply.CommitIndex
+		// debug("fuckk prevLogIndex:%v\n", reply.CommitIndex)
+		// if(args.PrevLogIndex >= 0) {
+		// 	args.PrevLogTerm = rf.logs_term[args.PrevLogIndex]
+		// 	args.Entries = rf.logs[args.PrevLogIndex:]
+		// 	args.Entries_term = rf.logs_term[args.PrevLogIndex:]
+		// }else {
+		// 	//args.PrevLogIndex = -1
+		// 	args.PrevLogTerm = -1
+		// 	args.Entries = rf.logs
+		// 	args.Entries_term = rf.logs_term
+		// }
+		// args.LeaderCommit = rf.commitIndex
+  //   	rf.SendAppendEntryToFollower(idx, args)
+    	rf.SendAppendEntriesToAllFollwer()
     }
 }
 
