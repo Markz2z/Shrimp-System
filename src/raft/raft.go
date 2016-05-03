@@ -25,6 +25,7 @@ import "math/rand"
 import "bytes"
 import "encoding/gob"
 import "fmt"
+import "os"
 
 // Debugging enabled?
 const debugEnabled = false
@@ -61,8 +62,8 @@ const (
 
 const (
 	HeartbeatCycle = time.Millisecond * 50;
-	ElectionMinTime = 200;
-	ElectionMaxTime = 500; 
+	ElectionMinTime = 150;
+	ElectionMaxTime = 300; 
 )
 
 //
@@ -188,7 +189,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			rf.persist()
 		}
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
-        rf.logger.Printf("Got vote request with current term, now voted for %v\n", args.votedFor)
+        //rf.logger.Printf("Got vote request with current term, now voted for %v\n", args.V)
 		reply.Term = rf.currentTerm
 		return
 	}
@@ -362,7 +363,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
         reply.Success = false
 		reply.Term = rf.currentTerm
 	} else {
-        rf.logger.Printf("Got append request with term = %v, update and follow and append\n", args.Term
+        rf.logger.Printf("Got append request with term = %v, update and follow and append\n", args.Term)
 		rf.state = FOLLOWER
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
@@ -386,7 +387,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 	        //If an existing entry conflicts with a new one (Entry with same index but different terms) 
 	        //delete the existing entry and all that follow it
 	        //reply.CommitIndex is the fucking guy who stand for the server's log size
-	        rf.logger.Printf("Appending log from %v (count %v)\n", args.PrevLogCount, len(args.Entries))
+	        rf.logger.Printf("Appending log from %v (count %v)\n", args.PrevLogIndex, len(args.Entries))
             rf.logs = rf.logs[:args.PrevLogIndex + 1]
 	        rf.logs_term = rf.logs_term[:args.PrevLogIndex + 1]
 	        rf.logs = append(rf.logs, args.Entries...)
@@ -554,7 +555,7 @@ func (rf *Raft) handleTimer() {
 //generate a random value for every server between 150~300
 //
 func (rf *Raft) resetTimer() {
-	if rf.timer == nil , new_timeout{
+	if rf.timer == nil{
 		rf.timer = time.NewTimer(time.Millisecond * 10000)
 		go func() {
 			for {
@@ -566,9 +567,9 @@ func (rf *Raft) resetTimer() {
 	new_timeout := HeartbeatCycle
 	if rf.state != LEADER {
 		new_timeout = time.Millisecond * time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
-		//debug("server[%v]'s random timeout is: %vms\n", rf.me, new_timeout)
+		//debug("server[%v]'s random timeout is: %vs\n", rf.me, new_timeout)
 	}
-    rf.logger.Printf("Resetting timer to %vms\n", new_timeout)
+    rf.logger.Printf("Resetting timer to %v\n", new_timeout)
 	rf.timer.Reset(new_timeout)
 }
 //
