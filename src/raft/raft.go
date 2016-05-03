@@ -27,7 +27,7 @@ import "encoding/gob"
 import "fmt"
 import "os"
 
-// Debugging enabled?
+// Debugging enabled
 const debugEnabled = false
 
 // DPrintf will only print if the debugEnabled const has been set to true
@@ -154,27 +154,26 @@ type RequestVoteReply struct {
 }
 
 //
-//[Lost Vote]1.Reply false if candidate's term is less than currentTerm
-//[Grant Vote]2.if votedFor is null or candidate's id,  and candidate's log is at least as up-to-date as receiver's log, grant vote
+// [Lost Vote] 1.Reply false if candidate's term is less than currentTerm
+// [Grant Vote]2.if votedFor is null or candidate's id,  and candidate's log is at least as up-to-date as receiver's log, grant vote
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	may_grant_vote := true
 
-	//detect whether should vote to this candidate
+	// detect whether should vote to this candidate
 	if len(rf.logs) > 0 {
-		//I.current server's log must not newer than the candidate
-		//II.if the term of current server is the same as the candidate
-		//   the candidate must have more logs than current server
-		//Or current server will never vote for this candidate
+		// I.current server's log must not newer than the candidate
+		// II.if the term of current server is the same as the candidate
+		//    the candidate must have more logs than current server
+		// Or current server will never vote for this candidate
 		if rf.logs_term[len(rf.logs) - 1] > args.LastLogTerm ||
 		   (rf.logs_term[len(rf.logs)-1] == args.LastLogTerm && 
 		   len(rf.logs) - 1 > args.LastLogIndex) {
 				may_grant_vote = false
 		}
 	}
-    rf.logger.Printf("Got vote request:%v, may grant vote: %v\n", args, may_grant_vote)
 
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
@@ -183,19 +182,17 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if args.Term == rf.currentTerm {
-		//one machine could only vote for one machine
+		// Only one ticket for each server
 		if rf.votedFor == -1 && may_grant_vote {
 			rf.votedFor = args.CandidateId
 			rf.persist()
 		}
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
-        //rf.logger.Printf("Got vote request with current term, now voted for %v\n", args.V)
 		reply.Term = rf.currentTerm
 		return
 	}
  
 	if args.Term > rf.currentTerm {
-		rf.logger.Printf("Got vote request with term = %v, follow it\n", args.Term)
         rf.state = FOLLOWER
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
@@ -207,7 +204,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 		reply.VoteGranted = (rf.votedFor == args.CandidateId)
 		if reply.VoteGranted {
-			debug("server[%v] is vote for server[%v] at Term:%v\n", rf.me, args.CandidateId, rf.currentTerm)
+			rf.logger.Printf("Vote for server[%v] at Term:%v\n", rf.me, args.CandidateId, rf.currentTerm)
 		}
 		reply.Term = args.Term
 		return
@@ -221,8 +218,6 @@ func majority(n int) int {
 func (rf *Raft) handleVotesResult(reply RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
-    rf.logger.Printf("Got vote result: %v\n", reply)
 
 	if reply.Term < rf.currentTerm {
 		return
@@ -240,8 +235,7 @@ func (rf *Raft) handleVotesResult(reply RequestVoteReply) {
 		rf.granted_votes_count += 1
 		if rf.granted_votes_count >= majority(len(rf.peers)) {
 			rf.state = LEADER
-			debug("server[%v] is Leader at Term%v\n", rf.me, rf.currentTerm);
-			debug("server has %v logs\n", len(rf.logs))
+			rf.logger.Printf("Leader at Term:%v log_len:%v\n", rf.me, rf.currentTerm, len(rf.logs));
 			for i:=0 ;i < len(rf.peers); i+=1 {
 				if(i==rf.me) {
 					continue
@@ -309,7 +303,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.logs_term = append(rf.logs_term, rf.currentTerm)
 	rf.persist()
 
-	return index, rf.currentTerm, rf.state==LEADER
+	rf.logger.Printf("New command:%v at term:%v\n", index, rf.currentTerm)
+
+	return index+1, rf.currentTerm, rf.state==LEADER
 }
 
 //
@@ -346,11 +342,11 @@ func (rf *Raft) commitLogs() {
     	rf.commitIndex = len(rf.logs) - 1
     }
 
-    debug("server[%v] lastApplied:%v commitIndex:%v\n", rf.me, rf.lastApplied, rf.commitIndex)
-    for i:=rf.lastApplied + 1;i <= rf.commitIndex;i++ {
-        rf.logger.Printf("Applying cmd %v\n", i)
+    for i:=rf.lastApplied + 1;i<=rf.commitIndex;i++ {
+        //rf.logger.Printf("Applying cmd %v\n", i)
         rf.applyCh <- ApplyMsg{ Index:i+1, Command: rf.logs[i] }
     }
+
     rf.lastApplied = rf.commitIndex
 }
 
@@ -359,19 +355,20 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 	defer rf.mu.Unlock()
 	
     if args.Term < rf.currentTerm {
-	    rf.logger.Printf("Got append request with term = %v, drop it\n", args.Term)	
+        rf.logger.Printf("Args term:%v less than currentTerm:%v drop it", args.Term, rf.currentTerm)
         reply.Success = false
 		reply.Term = rf.currentTerm
 	} else {
-        rf.logger.Printf("Got append request with term = %v, update and follow and append\n", args.Term)
 		rf.state = FOLLOWER
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		reply.Term = args.Term
-		//fffirst synchronized
+		// Since at first, leader communicates with followers,
+		// nextIndex[idx] value equal to len(leader.logs)
+		// so system need to find the matching term and index
 		if args.PrevLogIndex >= 0 &&
 			(len(rf.logs) - 1 < args.PrevLogIndex || rf.logs_term[args.PrevLogIndex] != args.PrevLogTerm) {
-		    rf.logger.Printf("Not match: %v\n", args)
+		    rf.logger.Printf("Match failed %v\n", args)
             reply.CommitIndex = len(rf.logs) - 1
 		    if reply.CommitIndex > args.PrevLogIndex {
 		    	reply.CommitIndex = args.PrevLogIndex
@@ -384,23 +381,22 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 			}
             reply.Success = false
 		}else if args.Entries!=nil {
-	        //If an existing entry conflicts with a new one (Entry with same index but different terms) 
-	        //delete the existing entry and all that follow it
-	        //reply.CommitIndex is the fucking guy who stand for the server's log size
-	        rf.logger.Printf("Appending log from %v (count %v)\n", args.PrevLogIndex, len(args.Entries))
-            rf.logs = rf.logs[:args.PrevLogIndex + 1]
-	        rf.logs_term = rf.logs_term[:args.PrevLogIndex + 1]
-	        rf.logs = append(rf.logs, args.Entries...)
-	        rf.logs_term = append(rf.logs_term, args.Entries_term...)
-	        debug("server[%v] success commit\n", rf.me)
+	        // If an existing entry conflicts with a new one (Entry with same index but different terms) 
+	        // delete the existing entry and all that follow it
+	        // reply.CommitIndex is the fucking guy stand for server's log size
+	        rf.logger.Printf("Appending %v logs from %v\n", len(args.Entries), args.PrevLogIndex)
+        	rf.logs = rf.logs[:args.PrevLogIndex + 1]
+        	rf.logs_term = rf.logs_term[:args.PrevLogIndex + 1]
+        	rf.logs = append(rf.logs, args.Entries...)
+        	rf.logs_term = append(rf.logs_term, args.Entries_term...)
 	        if len(rf.logs) - 1 >= args.LeaderCommit {
 	        	rf.commitIndex = args.LeaderCommit
 	        	go rf.commitLogs()
 	        }
-        	reply.CommitIndex = len(rf.logs)
+        	reply.CommitIndex = len(rf.logs) - 1
 	        reply.Success = true
 	    }else {
-            rf.logger.Printf("It's a heartbeat...\n")
+            rf.logger.Printf("Heartbeat...\n")
 	    	if len(rf.logs) - 1 >= args.LeaderCommit {
 	    		rf.commitIndex = args.LeaderCommit
 	    		go rf.commitLogs()
@@ -432,23 +428,21 @@ func (rf *Raft) SendAppendEntriesToAllFollwer() {
 		args.Term = rf.currentTerm
 		args.Leader_id = rf.me
 		args.PrevLogIndex = rf.nextIndex[i] - 1
-		if(args.PrevLogIndex >= 0) {
+		rf.logger.Printf("prevLogIndx:%v logs_term:%v", args.PrevLogIndex, len(rf.logs_term))
+		if args.PrevLogIndex >= 0 {
 			args.PrevLogTerm = rf.logs_term[args.PrevLogIndex]
-			args.Entries = rf.logs[args.PrevLogIndex:]
-			args.Entries_term = rf.logs_term[args.PrevLogIndex:]
-		}else {
-			args.PrevLogTerm = -1
-			args.Entries = nil
-			args.Entries_term = nil
+		}
+		if rf.nextIndex[i] < len(rf.logs) {
+			args.Entries = rf.logs[rf.nextIndex[i]:]
+			args.Entries_term = rf.logs_term[rf.nextIndex[i]:]
 		}
 		args.LeaderCommit = rf.commitIndex
-		debug("leader server[%v] send appendEntry to all follower commitIndex:%v\n", rf. me, rf.commitIndex)
 		rf.SendAppendEntryToFollower(i, args)
 	}
 }
 
 //
-//Handle AppendEntry result
+// Handle AppendEntry result
 //
 func (rf *Raft) handleAppendEntries(reply AppendEntryReply, idx int) {
     rf.mu.Lock()
@@ -457,11 +451,11 @@ func (rf *Raft) handleAppendEntries(reply AppendEntryReply, idx int) {
     rf.logger.Printf("Got append entries result: %v\n", reply)
 
     if rf.state != LEADER {
-        rf.logger.Printf("lose leader\n")
+        rf.logger.Printf("Lose leader\n")
         return
     }
 
-    //Leader should degenerate to Follower
+    // Leader should degenerate to Follower
     if reply.Term > rf.currentTerm {
         rf.currentTerm = reply.Term
         rf.state = FOLLOWER
@@ -491,41 +485,21 @@ func (rf *Raft) handleAppendEntries(reply AppendEntryReply, idx int) {
         }
     }else {
     	rf.nextIndex[idx] = reply.CommitIndex + 1
-		// var args AppendEntryArgs
-		// args.Term = rf.currentTerm
-		// args.Leader_id = rf.me
-		// args.PrevLogIndex = reply.CommitIndex
-		// debug("fuckk prevLogIndex:%v\n", reply.CommitIndex)
-		// if(args.PrevLogIndex >= 0) {
-		// 	args.PrevLogTerm = rf.logs_term[args.PrevLogIndex]
-		// 	args.Entries = rf.logs[args.PrevLogIndex:]
-		// 	args.Entries_term = rf.logs_term[args.PrevLogIndex:]
-		// }else {
-		// 	//args.PrevLogIndex = -1
-		// 	args.PrevLogTerm = -1
-		// 	args.Entries = rf.logs
-		// 	args.Entries_term = rf.logs_term
-		// }
-		// args.LeaderCommit = rf.commitIndex
-  //   	rf.SendAppendEntryToFollower(idx, args)
     	rf.SendAppendEntriesToAllFollwer()
     }
 }
 
-//
-//Follower don't get a Heartbeat Response from the Leader
-//
 func (rf *Raft) handleTimer() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	if rf.state != LEADER {
-        rf.logger.Printf("Timeout, start a new election, new term = %v\n", rf.currentTerm + 1)
 		rf.state = CANDIDATE
 		rf.currentTerm += 1
 		rf.votedFor = rf.me
 		rf.granted_votes_count = 1
 		rf.persist()
+		rf.logger.Printf("New election, Candidate:%v term:%v\n", rf.me, rf.currentTerm)
 		args := RequestVoteArgs{
 			Term:            rf.currentTerm,
 			CandidateId:     rf.me,
@@ -542,21 +516,19 @@ func (rf *Raft) handleTimer() {
 			}
 			rf.sendRequestVote(server, args)
 		}
-		//rf.granted_votes_count = 1
-		debug("server[%v] is send vote request for it self at Term%v\n", rf.me, rf.currentTerm)
 	} else {
-        rf.logger.Printf("Timeout, send heartbeat.\n")
 		rf.SendAppendEntriesToAllFollwer()
 	}
 	rf.resetTimer()
 }
+
 //
-//Heartbeat
-//generate a random value for every server between 150~300
+// LEADER(HeartBeat):50ms
+// FOLLOWER:150~300
 //
 func (rf *Raft) resetTimer() {
 	if rf.timer == nil{
-		rf.timer = time.NewTimer(time.Millisecond * 10000)
+		rf.timer = time.NewTimer(time.Millisecond * 1000)
 		go func() {
 			for {
 				<-rf.timer.C
@@ -567,11 +539,11 @@ func (rf *Raft) resetTimer() {
 	new_timeout := HeartbeatCycle
 	if rf.state != LEADER {
 		new_timeout = time.Millisecond * time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime - ElectionMinTime))
-		//debug("server[%v]'s random timeout is: %vs\n", rf.me, new_timeout)
 	}
-    rf.logger.Printf("Resetting timer to %v\n", new_timeout)
 	rf.timer.Reset(new_timeout)
+	rf.logger.Printf("Resetting timeout to %v\n", new_timeout)
 }
+
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -594,14 +566,20 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = -1
 	rf.logs = make([]interface{}, 0)
 	rf.logs_term = make([]int, 0)
-	rf.commitIndex = 0
+
+	// commitIndex initialized to -1
+	rf.commitIndex = -1
+	// lastApplied initialized to -1
 	rf.lastApplied = -1
 	rf.state = FOLLOWER
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.applyCh = applyCh
-    rf.logger = log.New(os.Stderr, fmt.Sprintf("[Server %v]", me), log.LstdFlags)
-
+	file, err := os.Create("log.txt")
+	if err != nil {
+		log.Fatal("failed to create log.txt")
+	}
+    rf.logger = log.New(file, fmt.Sprintf("[Server %v]", me), log.LstdFlags)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	rf.resetTimer()
