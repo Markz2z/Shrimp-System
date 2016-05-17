@@ -6,7 +6,10 @@ import (
 	"log"
 	"raft"
 	"sync"
+	"time"
 )
+
+const TIMEOUT = time.Second * 3
 
 const Debug = 0
 
@@ -17,11 +20,8 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+
 }
 
 type RaftKV struct {
@@ -32,16 +32,31 @@ type RaftKV struct {
 
 	maxraftstate int // snapshot if log grows this big
 
-	// Your definitions here.
+	data     map[string]string
 }
 
 
 func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	DPrintf("Get: %v", args)
+	reply.Value = kv.data[args.Key]
 }
 
 func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	switch args.Op {
+	case "Put":
+		DPrintf("Put Key/Value %v/%v\n", args.Key, args.Value)
+		kv.data[args.Key] = args.Value
+	case "Append":
+		DPrintf("Append Key/Value %v/%v\n", args.Key, args.Value)
+		kv.data[args.Key] = kv.data[args.Key] + args.Value
+	default:
+	}
 }
 
 //
@@ -81,7 +96,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	kv.data = make(map[string]string)
 
 	return kv
 }
