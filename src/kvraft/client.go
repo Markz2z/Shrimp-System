@@ -40,13 +40,15 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-	var args GetArgs
+	var args Op
 	args.Key = key
-	for i := 0;i<len(ck.servers);i++ {
-		var reply GetReply
-		ok := ck.servers[i].Call("RaftKV.Get", &args, &reply)
+	for {
+		var reply OpReply
+		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", &args, &reply)
 		if ok {
 			return reply.Value
+		}else {
+			ck.leader_id = ck.leader_id + 1
 		}
 	}
 	return ""
@@ -63,15 +65,17 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	var args PutAppendArgs
+	var args Op
 	args.Op = op
 	args.Key = key
 	args.Value = value
-	for i := 0;i<len(ck.servers);i++ {
-		var reply PutAppendReply
-		ok := ck.servers[i].Call("RaftKV.PutAppend", &args, &reply)
+	for {
+		var reply OpReply
+		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", &args, &reply)
 		if ok {
 			break
+		}else {
+			ck.leader_id = ck.leader_id + 1
 		}
 	}
 }

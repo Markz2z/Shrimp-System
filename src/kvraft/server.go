@@ -11,7 +11,7 @@ import (
 
 const TIMEOUT = time.Second * 3
 
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -20,8 +20,9 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-type Op struct {
-
+type P_Op struct {
+	flag    chan bool
+	op      *Op
 }
 
 type RaftKV struct {
@@ -32,31 +33,64 @@ type RaftKV struct {
 
 	maxraftstate int // snapshot if log grows this big
 
+	pendingOps map[int64][]*P_Op
 	data     map[string]string
 }
 
-
-func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
+func (kv *RaftKV) ExecOp(op *Op, op_reply *OpReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
+	op_idx, cur_term, is_leader = kv.rf.Start(op)
+	if !is_leader {
+		op_reply = STATUS_FOLLOWER
+		DPrintf("This server is not Leader\n")
+		return
+	}
 
-	DPrintf("Get: %v", args)
-	reply.Value = kv.data[args.Key]
+	waiter := make(chan bool, 1)
+	kv.pendingOps[op_idx] = append(kv.pendingOps[op_idx], &P_Op{flag: waiter, op: &op})
+
+	timer := time.NewTimer(TIMEOUT)
+	select {
+	case ok := <-waiter: 
+	case <-timer.C:
+		reply.Status = STATUS_FOLLOWER
+		DPrintf("Exceeds Timeout!\n")
+		ok = false
+		return
+	default
+	}
+
+	reply.Status = STATUS_LEADER
+	if op.OpType == OpGet {
+		reply.Value = kv.data[op.Key]
+	}
 }
 
-func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+func (kv *RaftKV) Apply(msg *raft.ApplyMsg) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
+	args := msg.Command
 	switch args.Op {
-	case "Put":
+	case OpPut:
 		DPrintf("Put Key/Value %v/%v\n", args.Key, args.Value)
 		kv.data[args.Key] = args.Value
-	case "Append":
+	case OpAppend:
 		DPrintf("Append Key/Value %v/%v\n", args.Key, args.Value)
 		kv.data[args.Key] = kv.data[args.Key] + args.Value
 	default:
 	}
+
+	for _, x in range 
+	delete(kv.pendingOps, msg.Index)
+}
+
+func (kv *RaftKV)Appky(msg *raft.ApplyMsg) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+
 }
 
 //
@@ -91,12 +125,19 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv := new(RaftKV)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
-
+	kv.persister = persister
 	// Your initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.data = make(map[string]string)
+
+	go func () {
+		for {
+			msg := <-kv.applyCh
+			kv.Apply(&msg)
+		}
+	}()
 
 	return kv
 }
