@@ -7,8 +7,6 @@ const (
 
 type Err string
 
-type OpType int
-
 const (
 	OpGet        = 0
 	OpAppend = 1
@@ -16,7 +14,7 @@ const (
 )
 
 type Op struct {
-	Type    OpType
+	Type    int
 	Key      string
 	Value   string
 	Client  int64
@@ -24,7 +22,7 @@ type Op struct {
 }
 
 type OpReply struct {
-	WrongLeader bool
+	IsLeader bool
 	Err            Err
 	Value       string
 }

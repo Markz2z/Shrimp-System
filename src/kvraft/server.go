@@ -13,6 +13,11 @@ const TIMEOUT = time.Second * 3
 
 const Debug = 1
 
+const(
+	STATUS_FOLLOWER = false
+	STATUS_LEADER = true
+)
+
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
 		log.Printf(format, a...)
@@ -33,37 +38,47 @@ type RaftKV struct {
 
 	maxraftstate int // snapshot if log grows this big
 
-	pendingOps map[int64][]*P_Op
+	pendingOps map[int][]*P_Op
 	data     map[string]string
+	persister *raft.Persister
 }
 
-func (kv *RaftKV) ExecOp(op *Op, op_reply *OpReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	op_idx, cur_term, is_leader = kv.rf.Start(op)
+func (kv *RaftKV) ExecOp(op Op, op_reply *OpReply) {
+	op_idx, _, is_leader := kv.rf.Start(op)
 	if !is_leader {
-		op_reply = STATUS_FOLLOWER
+		op_reply.IsLeader = STATUS_FOLLOWER
 		DPrintf("This server is not Leader\n")
 		return
 	}
 
 	waiter := make(chan bool, 1)
+	DPrintf("Append to pendingOps op_idx:%v  op:%v\n", op_idx, op)
+	kv.mu.Lock()
 	kv.pendingOps[op_idx] = append(kv.pendingOps[op_idx], &P_Op{flag: waiter, op: &op})
-
+	kv.mu.Unlock()
+	//DPrintf("@@@kv.pendingOps[%v]:%v\n", op_idx, kv.pendingOps[op_idx])
+	var ok bool
 	timer := time.NewTimer(TIMEOUT)
 	select {
-	case ok := <-waiter: 
+	case ok = <-waiter: 
 	case <-timer.C:
-		reply.Status = STATUS_FOLLOWER
-		DPrintf("Exceeds Timeout!\n")
+		DPrintf("Wait operation apply to state machine exceeds timeout....\n")
 		ok = false
-		return
-	default
 	}
 
-	reply.Status = STATUS_LEADER
-	if op.OpType == OpGet {
-		reply.Value = kv.data[op.Key]
+	if !ok {
+		DPrintf("Wrong leader\n")
+		op_reply.IsLeader = STATUS_FOLLOWER
+		return
+	}
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	op_reply.IsLeader = STATUS_LEADER
+	DPrintf("This server is Leader")
+	if op.Type == OpGet {
+		DPrintf("Get Key:%v Value:%v\n", op.Key, op.Value)
+		op_reply.Value = kv.data[op.Key]
 	}
 }
 
@@ -71,8 +86,9 @@ func (kv *RaftKV) Apply(msg *raft.ApplyMsg) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
-	args := msg.Command
-	switch args.Op {
+	var args Op
+	args = msg.Command.(Op)
+	switch args.Type {
 	case OpPut:
 		DPrintf("Put Key/Value %v/%v\n", args.Key, args.Value)
 		kv.data[args.Key] = args.Value
@@ -82,15 +98,18 @@ func (kv *RaftKV) Apply(msg *raft.ApplyMsg) {
 	default:
 	}
 
-	for _, x in range 
+	//DPrintf("@@@Index:%v len:%v content:%v\n", msg.Index, len(kv.pendingOps[msg.Index]), kv.pendingOps[msg.Index])
+	//DPrintf("@@@kv.pendingOps[%v]:%v\n", msg.Index, kv.pendingOps[msg.Index])
+	for _, i := range kv.pendingOps[msg.Index] {
+		if i.op.Client==args.Client && i.op.Id==args.Id {
+			DPrintf("Client:%v %v, Id:%v %v", i.op.Client, args.Client, i.op.Id, args.Id)
+			i.flag <- true
+		}else {
+			DPrintf("Client:%v %v, Id:%v %v", i.op.Client, args.Client, i.op.Id, args.Id)
+			i.flag <-false
+		}
+	}
 	delete(kv.pendingOps, msg.Index)
-}
-
-func (kv *RaftKV)Appky(msg *raft.ApplyMsg) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-
-
 }
 
 //
@@ -121,6 +140,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// call gob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	gob.Register(Op{})
+	gob.Register(OpReply{})
 
 	kv := new(RaftKV)
 	kv.me = me
@@ -131,6 +151,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.data = make(map[string]string)
+	kv.pendingOps = make(map[int][]*P_Op)	
 
 	go func () {
 		for {

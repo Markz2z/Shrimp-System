@@ -3,14 +3,14 @@ package raftkv
 import "labrpc"
 import "crypto/rand"
 import "math/big"
-
+import "sync/atomic"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 
-	leader_id int64
+	leader_id int
 	client_id  int64
-
+	cur_op_count	int64
 }
 
 func nrand() int64 {
@@ -24,6 +24,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	ck.client_id = nrand()
+	ck.leader_id = 0
+	ck.cur_op_count = 0
 	return ck
 }
 
@@ -42,9 +44,11 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	var args Op
 	args.Key = key
+	args.Type = OpGet
+	args.Id = atomic.AddInt64(&ck.cur_op_count, 1)
 	for {
 		var reply OpReply
-		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", &args, &reply)
+		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", args, &reply)
 		if ok {
 			return reply.Value
 		}else {
@@ -64,25 +68,27 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 //
-func (ck *Clerk) PutAppend(key string, value string, op string) {
+func (ck *Clerk) PutAppend(key string, value string, op int) {
 	var args Op
-	args.Op = op
+	args.Type = op
 	args.Key = key
 	args.Value = value
+	args.Id = atomic.AddInt64(&ck.cur_op_count, 1)
 	for {
 		var reply OpReply
-		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", &args, &reply)
-		if ok {
+		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", args, &reply)
+		if ok && reply.IsLeader == STATUS_LEADER{
+			DPrintf("Call success\n")
 			break
 		}else {
-			ck.leader_id = ck.leader_id + 1
+			ck.leader_id = (ck.leader_id + 1) % len(ck.servers)
 		}
 	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	ck.PutAppend(key, value, OpPut)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	ck.PutAppend(key, value, OpAppend)
 }
