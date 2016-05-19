@@ -45,14 +45,15 @@ func (ck *Clerk) Get(key string) string {
 	var args Op
 	args.Key = key
 	args.Type = OpGet
+	args.Client = ck.client_id
 	args.Id = atomic.AddInt64(&ck.cur_op_count, 1)
 	for {
 		var reply OpReply
 		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", args, &reply)
-		if ok {
+		if ok && reply.IsLeader == STATUS_LEADER{
 			return reply.Value
 		}else {
-			ck.leader_id = ck.leader_id + 1
+			ck.leader_id = (ck.leader_id + 1) % len(ck.servers)
 		}
 	}
 	return ""
@@ -73,6 +74,7 @@ func (ck *Clerk) PutAppend(key string, value string, op int) {
 	args.Type = op
 	args.Key = key
 	args.Value = value
+	args.Client = ck.client_id
 	args.Id = atomic.AddInt64(&ck.cur_op_count, 1)
 	for {
 		var reply OpReply

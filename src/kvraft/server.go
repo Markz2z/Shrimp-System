@@ -11,7 +11,7 @@ import (
 
 const TIMEOUT = time.Second * 3
 
-const Debug = 1
+const Debug = 0
 
 const(
 	STATUS_FOLLOWER = false
@@ -41,6 +41,7 @@ type RaftKV struct {
 	pendingOps map[int][]*P_Op
 	data     map[string]string
 	persister *raft.Persister
+	op_count map[int64]int64
 }
 
 func (kv *RaftKV) ExecOp(op Op, op_reply *OpReply) {
@@ -88,14 +89,19 @@ func (kv *RaftKV) Apply(msg *raft.ApplyMsg) {
 
 	var args Op
 	args = msg.Command.(Op)
-	switch args.Type {
-	case OpPut:
-		DPrintf("Put Key/Value %v/%v\n", args.Key, args.Value)
-		kv.data[args.Key] = args.Value
-	case OpAppend:
-		DPrintf("Append Key/Value %v/%v\n", args.Key, args.Value)
-		kv.data[args.Key] = kv.data[args.Key] + args.Value
-	default:
+	if kv.op_count[args.Client] >= args.Id {
+		DPrintf("Duplicate operation\n")
+	}else {
+		switch args.Type {
+		case OpPut:
+			DPrintf("Put Key/Value %v/%v\n", args.Key, args.Value)
+			kv.data[args.Key] = args.Value
+		case OpAppend:
+			DPrintf("Append Key/Value %v/%v\n", args.Key, args.Value)
+			kv.data[args.Key] = kv.data[args.Key] + args.Value
+		default:
+		}
+		kv.op_count[args.Client] = args.Id
 	}
 
 	//DPrintf("@@@Index:%v len:%v content:%v\n", msg.Index, len(kv.pendingOps[msg.Index]), kv.pendingOps[msg.Index])
@@ -151,12 +157,12 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.data = make(map[string]string)
-	kv.pendingOps = make(map[int][]*P_Op)	
-
+	kv.pendingOps = make(map[int][]*P_Op)
+	kv.op_count = make(map[int64]int64)
 	go func () {
-		for {
-			msg := <-kv.applyCh
-			kv.Apply(&msg)
+		for msg:= range kv.applyCh{
+			//msg := <-kv.applyCh
+			go kv.Apply(&msg)
 		}
 	}()
 
