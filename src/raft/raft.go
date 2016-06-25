@@ -334,6 +334,7 @@ type AppendEntryReply struct {
     CommitIndex     int
 }
 
+//commit log is send ApplyMsg(a kind of redo log) to applyCh
 func (rf *Raft) commitLogs() {
     rf.mu.Lock()
     defer rf.mu.Unlock()

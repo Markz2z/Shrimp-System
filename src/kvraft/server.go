@@ -83,6 +83,7 @@ func (kv *RaftKV) ExecOp(op Op, op_reply *OpReply) {
 	}
 }
 
+//get a ApplyMsg(a kind of redo log), and then analyze the log and execute it.
 func (kv *RaftKV) Apply(msg *raft.ApplyMsg) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()

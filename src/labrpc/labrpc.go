@@ -416,7 +416,6 @@ func MakeService(rcvr interface{}) *Service {
 			svc.methods[mname] = method
 		}
 	}
-
 	return svc
 }
 
