@@ -155,7 +155,9 @@ type RequestVoteReply struct {
 
 //
 // [Lost Vote] 1.Reply false if candidate's term is less than currentTerm
-// [Grant Vote]2.if votedFor is null or candidate's id,  and candidate's log is at least as up-to-date as receiver's log, grant vote
+// [Lost Vote] 2.Reply false if candidate's latest commited log index is less than current server
+// [Lost Vote] 3.Reply false if current server already vote for other server
+// [Grant Vote]4.if votedFor is null or candidate's id,  and candidate's log is at least as up-to-date as receiver's log, grant vote
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
