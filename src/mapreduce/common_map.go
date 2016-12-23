@@ -51,7 +51,7 @@ func doMap(
 	debug("DEBUG[doMap]: Map result pair size %d\n", rSize)
 	file.Close()
 
-	for i:=0;i<nReduce;i++ {
+	for i := 0; i < nReduce; i++ {
 		//create an intermediate file according to [1]jobName [2]mapTaskNumber [3]i
 		fileName := reduceName(jobName, mapTaskNumber, i)
 		debug("DEBUG[doMap]: Map intermediate filename: %s\n", fileName)

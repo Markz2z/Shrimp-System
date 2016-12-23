@@ -14,15 +14,15 @@ const (
 )
 
 type Op struct {
-	Type    int
+	Type     int
 	Key      string
-	Value   string
-	Client  int64
-	Id         int64
+	Value    string
+	Client   int64
+	Id       int64
 }
 
 type OpReply struct {
 	IsLeader bool
-	Err            Err
-	Value       string
+	Err      Err
+	Value    string
 }

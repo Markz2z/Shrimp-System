@@ -9,12 +9,12 @@ func (mr *Master) schedule(phase jobPhase) {
 	var ntasks int
 	var nios int // number of inputs (for reduce) or outputs (for map)
 	switch phase {
-	case mapPhase:
-		ntasks = len(mr.files)
-		nios = mr.nReduce
-	case reducePhase:
-		ntasks = mr.nReduce
-		nios = len(mr.files)
+		case mapPhase:
+			ntasks = len(mr.files)
+			nios = mr.nReduce
+		case reducePhase:
+			ntasks = mr.nReduce
+			nios = len(mr.files)
 	}
 
 	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, nios)
@@ -24,7 +24,7 @@ func (mr *Master) schedule(phase jobPhase) {
 	// Remember that workers may fail, and that any given worker may finish
 	// multiple tasks.
 	var wg sync.WaitGroup
-	for i:=0;i<ntasks;i++ {
+	for i := 0; i < ntasks; i++ {
 		wg.Add(1)
 		go func(taskNum int, nios int, phase jobPhase) {
 			defer wg.Done()
@@ -46,7 +46,7 @@ func (mr *Master) schedule(phase jobPhase) {
 					break
 				}
 			}
-		}(i, nios, phase)
+		} (i, nios, phase)
 	}
 	wg.Wait()
 	fmt.Printf("Schedule: %v phase done\n", phase)

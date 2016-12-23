@@ -28,10 +28,10 @@ func (wk *Worker) DoTask(arg *DoTaskArgs, _ *struct{}) error {
 		wk.name, arg.Phase, arg.TaskNumber, arg.File, arg.NumOtherPhase)
 
 	switch arg.Phase {
-	case mapPhase:
-		doMap(arg.JobName, arg.TaskNumber, arg.File, arg.NumOtherPhase, wk.Map)
-	case reducePhase:
-		doReduce(arg.JobName, arg.TaskNumber, arg.NumOtherPhase, wk.Reduce)
+		case mapPhase:
+			doMap(arg.JobName, arg.TaskNumber, arg.File, arg.NumOtherPhase, wk.Map)
+		case reducePhase:
+			doReduce(arg.JobName, arg.TaskNumber, arg.NumOtherPhase, wk.Reduce)
 	}
 
 	fmt.Printf("%s: %v task #%d done\n", wk.name, arg.Phase, arg.TaskNumber)

@@ -6,22 +6,20 @@ import (
 	"encoding/json"
 	"sort"
 )
-// doReduce does the job of a reduce worker: it reads the intermediate
-// key/value pairs (produced by the map phase) for this task, sorts the
-// intermediate key/value pairs by key, calls the user-defined reduce function
-// (reduceF) for each key, and writes the output to disk.
+// doReduce does the job of a reduce worker: 
+// 1.read the intermediate key/value pairs (produced by the map phase) for this task
+// 2.sorts the intermediate key/value pairs by key
+// 3.call user-defined reduce function(reduceF) for each key
+// 4.write back the output to disk.
 func doReduce(
-	jobName string, // the name of the whole MapReduce job
+	jobName string,       // the name of the whole MapReduce job
 	reduceTaskNumber int, // which reduce task this is
-	nMap int, // the number of map tasks that were run ("M" in the paper)
+	nMap int,             // the number of map tasks that were run ("M" in the paper)
 	reduceF func(key string, values []string) string,
 ) {
 	debug("DEBUG[doReduce]: jobName:%s, reduceTaskNumber:%d, mapTask:%d\n", jobName, reduceTaskNumber, nMap);
-
-	//a map string -> string array
 	keyValues := make(map[string][]string)
-
-	for i:=0;i<nMap;i++ {
+	for i := 0; i < nMap; i++ {
 		fileName := reduceName(jobName, i, reduceTaskNumber)
 		debug("DEBUG[doReduce]: Reduce File %s\n", fileName)
 		file, err := os.Open(fileName)
@@ -38,7 +36,7 @@ func doReduce(
 			var kv KeyValue
 			err := dec.Decode(&kv)
 			if err != nil {
-				break	
+				break
 			}
 			_, ok := keyValues[kv.Key]
 			if !ok {

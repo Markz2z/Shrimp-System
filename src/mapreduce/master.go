@@ -11,7 +11,6 @@ import (
 // master of workers that have gone idle and are in need of new work.
 type Master struct {
 	sync.Mutex
-
 	address         string
 	registerChannel chan string
 	doneChannel     chan bool

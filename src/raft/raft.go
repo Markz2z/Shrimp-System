@@ -157,7 +157,8 @@ type RequestVoteReply struct {
 // [Lost Vote] 1.Reply false if candidate's term is less than currentTerm
 // [Lost Vote] 2.Reply false if candidate's latest commited log index is less than current server
 // [Lost Vote] 3.Reply false if current server already vote for other server
-// [Grant Vote]4.if votedFor is null or candidate's id,  and candidate's log is at least as up-to-date as receiver's log, grant vote
+// [Grant Vote]4.if votedFor is null or candidate's id,  and candidate's log is at 
+// least as up-to-date as receiver's log, grant vote
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
@@ -271,7 +272,7 @@ func (rf *Raft) handleVotesResult(reply RequestVoteReply) {
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs){
 	go func(idx int, args RequestVoteArgs) {
 		var reply RequestVoteReply
-		ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
+		ok := rf.peers[idx].Call("Raft.RequestVote", args, &reply)
 		if ok {
 			rf.handleVotesResult(reply)
 		}
@@ -345,9 +346,9 @@ func (rf *Raft) commitLogs() {
     	rf.commitIndex = len(rf.logs) - 1
     }
 
-    for i:=rf.lastApplied + 1;i<=rf.commitIndex;i++ {
+    for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
         //rf.logger.Printf("Applying cmd %v\n", i)
-        rf.applyCh <- ApplyMsg{ Index:i+1, Command: rf.logs[i] }
+        rf.applyCh <- ApplyMsg {Index:i + 1, Command: rf.logs[i] }
     }
 
     rf.lastApplied = rf.commitIndex
@@ -383,7 +384,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 				reply.CommitIndex--
 			}
             reply.Success = false
-		}else if args.Entries!=nil {
+		} else if args.Entries!=nil {
 	        // If an existing entry conflicts with a new one (Entry with same index but different terms) 
 	        // delete the existing entry and all that follow it
 	        // reply.CommitIndex is the fucking guy stand for server's log size
@@ -398,7 +399,7 @@ func (rf *Raft) AppendEntries(args AppendEntryArgs, reply *AppendEntryReply) {
 	        }
         	reply.CommitIndex = len(rf.logs) - 1
 	        reply.Success = true
-	    }else {
+	    } else {
             rf.logger.Printf("Heartbeat...\n")
 	    	if len(rf.logs) - 1 >= args.LeaderCommit {
 	    		rf.commitIndex = args.LeaderCommit
@@ -503,7 +504,7 @@ func (rf *Raft) handleTimer() {
 		rf.granted_votes_count = 1
 		rf.persist()
 		rf.logger.Printf("New election, Candidate:%v term:%v\n", rf.me, rf.currentTerm)
-		args := RequestVoteArgs{
+		args := RequestVoteArgs {
 			Term:            rf.currentTerm,
 			CandidateId:     rf.me,
 			LastLogIndex:    len(rf.logs) - 1,
@@ -513,7 +514,7 @@ func (rf *Raft) handleTimer() {
 			args.LastLogTerm = rf.logs_term[args.LastLogIndex]
 		}
 
-		for server := 0; server < len(rf.peers);server += 1 {
+		for server := 0; server < len(rf.peers); server += 1 {
 			if server == rf.me {
 				continue
 			}
