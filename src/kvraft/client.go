@@ -6,27 +6,26 @@ import "math/big"
 import "sync/atomic"
 
 type Clerk struct {
-	servers []*labrpc.ClientEnd
-
-	leader_id int
-	client_id  int64
-	cur_op_count	int64
+    servers       []*labrpc.ClientEnd
+    leader_id     int
+    client_id     int64
+    cur_op_count  int64
 }
 
 func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
+    max := big.NewInt(int64(1) << 62)
+    bigx, _ := rand.Int(rand.Reader, max)
+    x := bigx.Int64()
+    return x
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
-	ck := new(Clerk)
-	ck.servers = servers
-	ck.client_id = nrand()
-	ck.leader_id = 0
-	ck.cur_op_count = 0
-	return ck
+    ck := new(Clerk)
+    ck.servers = servers
+    ck.client_id = nrand()
+    ck.leader_id = 0
+    ck.cur_op_count = 0
+    return ck
 }
 
 //
@@ -50,9 +49,9 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		var reply OpReply
 		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", args, &reply)
-		if ok && reply.IsLeader == STATUS_LEADER{
+		if ok && reply.IsLeader == STATUS_LEADER {
 			return reply.Value
-		}else {
+		} else {
 			ck.leader_id = (ck.leader_id + 1) % len(ck.servers)
 		}
 	}
@@ -79,10 +78,10 @@ func (ck *Clerk) PutAppend(key string, value string, op int) {
 	for {
 		var reply OpReply
 		ok := ck.servers[ck.leader_id].Call("RaftKV.ExecOp", args, &reply)
-		if ok && reply.IsLeader == STATUS_LEADER{
+		if ok && reply.IsLeader == STATUS_LEADER {
 			DPrintf("Call success\n")
 			break
-		}else {
+		} else {
 			ck.leader_id = (ck.leader_id + 1) % len(ck.servers)
 		}
 	}

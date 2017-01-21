@@ -45,10 +45,10 @@ func debug(format string, a ...interface{}) (n int, err error) {
 // tester) on the same server, via the applyCh passed to Make().
 //
 type ApplyMsg struct {
-	Index       int
-	Command     interface{}
-	UseSnapshot bool   // ignore for lab2; only used in lab3
-	Snapshot    []byte // ignore for lab2; only used in lab3
+    Index       int
+    Command     interface{}
+    UseSnapshot bool   // ignore for lab2; only used in lab3
+    Snapshot    []byte // ignore for lab2; only used in lab3
 }
 
 const (
@@ -127,7 +127,7 @@ func (rf *Raft) persist() {
 func (rf *Raft) readPersist(data []byte) {
 	if data != nil {
 		buf := bytes.NewBuffer(data)
-		dec := gob.NewDecoder(buf)
+		dec := gob.NewDceoder(buf)
 		dec.Decode(&rf.currentTerm)
 		dec.Decode(&rf.votedFor)
 		dec.Decode(&rf.logs)

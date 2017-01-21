@@ -1,12 +1,12 @@
 package raftkv
 
 import (
-	"encoding/gob"
-	"labrpc"
-	"log"
-	"raft"
-	"sync"
-	"time"
+    "encoding/gob"
+    "labrpc"
+    "log"
+    "raft"
+    "sync"
+    "time"
 )
 
 const TIMEOUT = time.Second * 3
@@ -14,8 +14,8 @@ const TIMEOUT = time.Second * 3
 const Debug = 0
 
 const(
-	STATUS_FOLLOWER = false
-	STATUS_LEADER = true
+    STATUS_FOLLOWER = false
+    STATUS_LEADER = true
 )
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
